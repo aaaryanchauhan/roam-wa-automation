@@ -1,0 +1,10 @@
+{
+  "name": "roam-wa-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Roam's internal WhatsApp outreach console",
+  "scripts": {
+    "start": "npx --yes serve -l 5173 .",
+    "test": "node --test"
+  }
+}

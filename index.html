@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Roam Outreach</title>
+  <meta name="description" content="Roam’s internal WhatsApp outreach console.">
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f3d36'/%3E%3Cpath d='M9 23V9h7.5a4.5 4.5 0 0 1 1.2 8.8L22 23h-3.6l-3.9-5H12.2v5z M12.2 15.3h4.1a1.7 1.7 0 0 0 0-3.4h-4.1z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#send" aria-label="Roam Outreach — Quick Send">
+      <span class="logo" aria-hidden="true">R</span>
+      <span class="brand-text">Roam <span class="muted">Outreach</span></span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#send" data-view="send">Quick Send</a>
+      <a href="#followups" data-view="followups">Follow-ups <span class="badge" id="fu-badge" hidden>0</span></a>
+      <a href="#history" data-view="history">History</a>
+      <a href="#contacts" data-view="contacts">Contacts</a>
+      <a href="#templates" data-view="templates">Templates</a>
+      <a href="#settings" data-view="settings" aria-label="Settings">Settings</a>
+    </nav>
+  </header>
+
+  <main id="view" tabindex="-1"></main>
+
+  <div id="modal" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <noscript><p style="padding:24px">Roam Outreach needs JavaScript enabled.</p></noscript>
+  <script src="lib.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
