@@ -40,7 +40,8 @@ or move to another machine. Each browser or URL keeps its own separate data.
 
 Put `{{variable}}` anywhere in a template:
 
-- `{{first_name}}`, `{{property_name}}`, `{{city}}`, `{{property_type}}`, `{{country}}` are filled from the contact.
+- `{{property_name}}`, `{{city}}` (shown as **Location**), `{{first_name}}`, `{{property_type}}`, `{{country}}` are filled from the contact.
+- The built-in templates only use `{{property_name}}` and `{{city}}`, so a lead needs just a property name, a number and a location.
 - Any other name, like `{{amenity}}`, becomes a text field in Quick Send and is saved with the contact.
 
 Values you've filled are highlighted in the preview. Missing ones show in red, and the button
@@ -48,8 +49,7 @@ stays disabled until they're filled. Use **Edit message** to make a one-off chan
 
 The tool ships with seven Roam templates: Property Introduction, Short Introduction,
 Luxury Villa, Boutique Hotel, Vacation Rental, Follow-up and Demo Follow-up.
-When you type a property type (for example "villa" or "boutique hotel"), Quick Send suggests
-the matching template.
+When the property name or type mentions "villa", "hotel", etc., Quick Send suggests the matching template.
 
 ## Phone numbers
 

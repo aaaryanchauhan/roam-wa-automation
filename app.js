@@ -14,7 +14,7 @@
       name: 'Roam — Property Introduction',
       category: 'Introduction',
       body:
-        'Hey {{first_name}},\n\n' +
+        'Hi there,\n\n' +
         'I came across {{property_name}} in {{city}} and wanted to reach out.\n\n' +
         'I’m building Roam — a digital guest experience platform for properties like yours. It gives guests a simple way to access property information, local recommendations, experiences, services and support, all from their phone without downloading an app.\n\n' +
         'I’d love to show you what it looks like.\n\n' +
@@ -24,7 +24,7 @@
       name: 'Roam — Short Introduction',
       category: 'Introduction',
       body:
-        'Hey {{first_name}}! I came across {{property_name}} and wanted to reach out.\n\n' +
+        'Hi! I came across {{property_name}} and wanted to reach out.\n\n' +
         'I’m building Roam — a digital concierge that gives your guests everything they need (property info, local tips, experiences and support) right on their phone, no app needed.\n\n' +
         'Open to a quick look?',
     },
@@ -32,7 +32,7 @@
       name: 'Roam — Luxury Villa',
       category: 'Luxury Villa',
       body:
-        'Hi {{first_name}},\n\n' +
+        'Hi there,\n\n' +
         'I came across {{property_name}} in {{city}} — a beautiful villa.\n\n' +
         'I’m building Roam, a digital concierge for luxury stays. Guests get a private, beautifully designed guide on their phone: villa details, house rules, curated local recommendations, experiences like private chefs, transfers and tours, and direct support — no app to download.\n\n' +
         'It helps you deliver a five-star experience while your team answers far fewer repeat questions.\n\n' +
@@ -42,8 +42,8 @@
       name: 'Roam — Boutique Hotel',
       category: 'Boutique Hotel',
       body:
-        'Hi {{first_name}},\n\n' +
-        'I came across {{property_name}} in {{city}} and really liked what you’ve built.\n\n' +
+        'Hi {{property_name}} team,\n\n' +
+        'I came across your hotel in {{city}} and really liked what you’ve built.\n\n' +
         'I’m building Roam — a digital guest experience platform for boutique hotels. Guests scan a QR code and instantly have everything on their phone: hotel information, amenities, local recommendations, experiences and services they can request, and a direct line to your team. No app download.\n\n' +
         'It takes pressure off the front desk and opens new ways to offer guests extras.\n\n' +
         'Would you be open to taking a quick look?',
@@ -52,7 +52,7 @@
       name: 'Roam — Vacation Rental',
       category: 'Vacation Rental',
       body:
-        'Hi {{first_name}},\n\n' +
+        'Hi there,\n\n' +
         'I came across {{property_name}} in {{city}} and wanted to reach out.\n\n' +
         'I’m building Roam — a digital guest guide for vacation rentals. Every guest gets check-in instructions, Wi-Fi, house rules, local recommendations, experiences and support on their phone, without downloading an app.\n\n' +
         'For hosts and property managers that means fewer repeat questions, smoother check-ins and better reviews — across all your properties.\n\n' +
@@ -62,14 +62,14 @@
       name: 'Roam — Follow-up',
       category: 'Follow-up',
       body:
-        'Hi {{first_name}}, just following up on my message about Roam for {{property_name}}.\n\n' +
+        'Hi, just following up on my message about Roam for {{property_name}}.\n\n' +
         'Happy to send over a short demo so you can see how it would look for your guests — would that be helpful?',
     },
     {
       name: 'Roam — Demo Follow-up',
       category: 'Follow-up',
       body:
-        'Hi {{first_name}}, thanks again for taking the time to look at Roam!\n\n' +
+        'Hi, thanks again for taking the time to look at Roam!\n\n' +
         'I’d love to hear what you thought. If it’s helpful, I can set up a version for {{property_name}} so you can see it with your own property details.\n\n' +
         'Any questions I can answer?',
     },
@@ -86,7 +86,7 @@
   const KNOWN_VARS = {
     first_name: { label: 'First name', placeholder: 'Carlos', from: (c) => L.firstName(c.name) },
     property_name: { label: 'Property', placeholder: 'Casa Libia', from: (c) => c.propertyName },
-    city: { label: 'City', placeholder: 'Medellín', from: (c) => c.city },
+    city: { label: 'Location', placeholder: 'Medellín', from: (c) => c.city },
     property_type: { label: 'Property type', placeholder: 'villa', from: (c) => c.propertyType, list: 'pt-list' },
     country: { label: 'Country', placeholder: 'Colombia', from: (c) => c.country },
   };
@@ -101,7 +101,7 @@
 
   const CONTACT_FIELDS = [
     ['name', 'Name'], ['propertyName', 'Property name'], ['phone', 'WhatsApp number'],
-    ['country', 'Country'], ['city', 'City'], ['propertyType', 'Property type'],
+    ['country', 'Country'], ['city', 'Location'], ['propertyType', 'Property type'],
     ['website', 'Website'], ['instagram', 'Instagram'], ['email', 'Email'], ['notes', 'Notes'],
   ];
 
@@ -114,6 +114,15 @@
 
   function seedTemplates() {
     return DEFAULT_TEMPLATES.map((t) => ({ id: uid(), active: true, createdAt: nowIso(), ...t }));
+  }
+
+  /** Upgrade built-in templates the user never edited to the current wording. */
+  function migrateTemplates(data) {
+    if (!Array.isArray(data.templates)) return;
+    for (const t of data.templates) {
+      const def = DEFAULT_TEMPLATES.find((d) => d.name === t.name);
+      if (def && !t.updatedAt && t.body !== def.body && /\{\{\s*first_name\s*\}\}/.test(t.body)) t.body = def.body;
+    }
   }
 
   function freshDb() {
@@ -132,6 +141,7 @@
       if (raw) {
         const data = JSON.parse(raw);
         const base = freshDb();
+        migrateTemplates(data);
         return {
           ...base,
           ...data,
@@ -242,7 +252,7 @@
     return 'on ' + new Date(y, m - 1, d).toLocaleDateString([], { day: 'numeric', month: 'short' });
   }
 
-  const contactLabel = (c) => c.name || c.propertyName || L.formatPhone(c.phone);
+  const contactLabel = (c) => c.propertyName || c.name || L.formatPhone(c.phone);
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   const modKey = isMac ? '⌘' : 'Ctrl';
 
@@ -540,7 +550,7 @@
 
     // Suggested template for the property type.
     const suggest = $('#qs-suggest');
-    const cat = categoryForPropertyType(values.property_type);
+    const cat = categoryForPropertyType(values.property_type) || categoryForPropertyType(values.property_name);
     const sugg = cat && (!t || t.category !== cat) && !qs.isFollowUp ? activeTemplates().find((x) => x.category === cat) : null;
     suggest.innerHTML = sugg ? `<button class="chip chip-suggest" data-action="use-template" data-id="${sugg.id}">Suggested: ${esc(sugg.name)}</button>` : '';
 
@@ -792,7 +802,7 @@
     box.innerHTML = `<ul class="recent-list">${recents.map((c) => {
       const st = contactStatus(c);
       return `<li><button class="recent" data-action="load-contact" data-id="${c.id}">
-        <span class="recent-main"><strong>${esc(c.name || '—')}</strong><span class="muted">${esc(c.propertyName || '')}</span></span>
+        <span class="recent-main"><strong>${esc(c.propertyName || c.name || '—')}</strong><span class="muted">${esc(c.propertyName ? [c.name, c.city].filter(Boolean).join(' · ') : c.city || '')}</span></span>
         <span class="recent-phone mono">${esc(L.formatPhone(c.phone))}</span>
         <span class="recent-date"><span class="pill pill-${st.key}">${esc(st.label)}</span><span class="muted small">${esc(fmtRelative(c.lastSentAt || c.lastOpenedAt))}</span></span>
       </button></li>`;
@@ -869,7 +879,7 @@
       const d = L.daysUntil(c.followUp.due);
       return `<li class="fu-item ${d < 0 ? 'overdue' : d === 0 ? 'today' : ''}">
         <button class="fu-load" data-action="load-followup" data-id="${c.id}">
-          <span class="fu-main"><strong>${esc(c.name || '—')}</strong> <span class="muted">${esc(c.propertyName || '')}${c.city ? ' · ' + esc(c.city) : ''}</span></span>
+          <span class="fu-main"><strong>${esc(c.propertyName || c.name || '—')}</strong> <span class="muted">${esc([c.propertyName ? c.name : '', c.city].filter(Boolean).join(' · '))}</span></span>
           <span class="mono small">${esc(L.formatPhone(c.phone))}</span>
           <span class="small">${esc(t ? t.name : 'Template missing')}</span>
           <span class="fu-due">${esc(fmtDue(c.followUp.due))}</span>
@@ -939,11 +949,13 @@
         <thead><tr><th>Date</th><th>Contact</th><th>Number</th><th>Template</th><th>Status</th><th class="right">Actions</th></tr></thead>
         <tbody>${rows.map((o) => {
           const c = getContact(o.contactId);
-          const name = (c && c.name) || o.contactName || '—';
+          const person = (c && c.name) || o.contactName || '';
           const prop = (c && c.propertyName) || o.propertyName || '';
+          const name = prop || person || '—';
+          const sub = prop ? [person, c && c.city].filter(Boolean).join(' · ') : '';
           return `<tr>
             <td class="nowrap">${esc(fmtDateTime(o.openedAt))}</td>
-            <td><strong>${esc(name)}</strong>${prop ? `<div class="muted small">${esc(prop)}</div>` : ''}</td>
+            <td><strong>${esc(name)}</strong>${sub ? `<div class="muted small">${esc(sub)}</div>` : ''}</td>
             <td class="mono nowrap">${esc(L.formatPhone(o.phone))}</td>
             <td>${esc(o.templateName)}${o.isFollowUp ? ' <span class="pill pill-scheduled">follow-up</span>' : ''}
               <details class="msg"><summary>Message</summary><div class="bubble bubble-sm">${esc(o.message)}</div></details></td>
@@ -998,7 +1010,7 @@
     }
     body.innerHTML = `
       <div class="table-wrap"><table class="table">
-        <thead><tr><th>Name</th><th>Property</th><th>Number</th><th>Location</th><th>Type</th><th>Last contacted</th><th>Status</th><th class="right">Actions</th></tr></thead>
+        <thead><tr><th>Property</th><th>Contact</th><th>Number</th><th>Location</th><th>Type</th><th>Last contacted</th><th>Status</th><th class="right">Actions</th></tr></thead>
         <tbody>${rows.map((c) => {
           const st = contactStatus(c);
           const links = [
@@ -1007,8 +1019,8 @@
             c.email ? `<a href="mailto:${esc(c.email)}">email</a>` : '',
           ].filter(Boolean).join(' · ');
           return `<tr>
-            <td><strong>${esc(c.name || '—')}</strong>${links ? `<div class="small">${links}</div>` : ''}</td>
-            <td>${esc(c.propertyName || '')}${c.notes ? `<div class="muted small clamp" title="${esc(c.notes)}">${esc(c.notes)}</div>` : ''}</td>
+            <td><strong>${esc(c.propertyName || '—')}</strong>${links ? `<div class="small">${links}</div>` : ''}</td>
+            <td>${esc(c.name || '')}${c.notes ? `<div class="muted small clamp" title="${esc(c.notes)}">${esc(c.notes)}</div>` : ''}</td>
             <td class="mono nowrap">${esc(L.formatPhone(c.phone))}</td>
             <td>${esc([c.city, c.country].filter(Boolean).join(', '))}</td>
             <td>${esc(c.propertyType || '')}</td>
@@ -1117,7 +1129,7 @@
       <div class="page">
         <div class="page-head">
           <h1>Templates</h1>
-          <p class="muted">Use <code>{{first_name}}</code>, <code>{{property_name}}</code>, <code>{{city}}</code>, <code>{{property_type}}</code> — or any <code>{{custom_field}}</code>. Changes save automatically.</p>
+          <p class="muted">Use <code>{{property_name}}</code>, <code>{{city}}</code> (location), <code>{{first_name}}</code>, <code>{{property_type}}</code> — or any <code>{{custom_field}}</code>. Changes save automatically.</p>
         </div>
         <div class="tpl-layout">
           <section class="card flush tpl-list-card">
@@ -1409,7 +1421,7 @@
 
     'tpl-select': (el) => { ui.tplSelected = el.dataset.id; renderTemplateList(); renderTemplateEditor(); },
     'tpl-new': () => {
-      const t = { id: uid(), name: 'Roam — New template', category: 'Introduction', body: 'Hey {{first_name}},\n\n', active: true, createdAt: nowIso() };
+      const t = { id: uid(), name: 'Roam — New template', category: 'Introduction', body: 'Hi there,\n\nI came across {{property_name}} in {{city}}', active: true, createdAt: nowIso() };
       db.templates.push(t); save();
       ui.tplSelected = t.id; renderTemplateList(); renderTemplateEditor();
       const n = $('#tpl-name'); n.focus(); n.select();
@@ -1491,6 +1503,6 @@
     `<datalist id="pt-list">${PROPERTY_TYPES.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>` +
     `<datalist id="cat-list">${CATEGORIES.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>`);
 
-  try { if (!localStorage.getItem(STORE_KEY)) save(); } catch (e) { /* storage unavailable */ }
+  save(); // Persist first-run seed data and any template migrations.
   render();
 })();
