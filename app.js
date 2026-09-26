@@ -140,7 +140,7 @@
       templates: seedTemplates(),
       contacts: [],
       outreach: [],
-      settings: { defaultCountryCode: '', openMode: 'auto', lastTemplateId: null },
+      settings: { defaultCountryCode: '', openMode: 'auto', lastTemplateId: null, counterResetAt: null },
     };
   }
 
@@ -430,7 +430,16 @@
     folder: 'all', // Contacts filter: 'all', 'none' or a folder id
     selected: new Set(), // contact ids ticked in the Contacts table
     tplSelected: null,
+    queue: loadQueuePrefs(), // lead list on Quick Send: { folder, filter: 'todo' | 'all', tab: 'list' | 'recent' }
   };
+
+  function loadQueuePrefs() {
+    const base = { folder: 'all', filter: 'todo', tab: 'list' };
+    try { return { ...base, ...JSON.parse(localStorage.getItem('roam-wa-queue') || '{}') }; } catch (e) { return base; }
+  }
+  function saveQueuePrefs() {
+    try { localStorage.setItem('roam-wa-queue', JSON.stringify(ui.queue)); } catch (e) { /* ignore */ }
+  }
 
   const LAST_FOLDER_KEY = 'roam-wa-last-folder';
   function rememberedFolderId() {
@@ -511,6 +520,7 @@
       : '';
 
     main().innerHTML = `
+      <div class="qs-top" id="qs-top"></div>
       <div class="qs">
         <div class="qs-left">
           ${followBanner}
@@ -551,15 +561,18 @@
               </div>
             </details>
             <div class="form-foot">
-              <button class="btn btn-ghost" data-action="qs-clear" title="Alt+N">Clear / next lead</button>
-              <span class="muted small">Leads are remembered automatically when you open WhatsApp.</span>
+              <button class="btn btn-ghost" data-action="qs-clear">Clear form</button>
+              <span class="muted small">Every lead you type, paste or open is saved automatically.</span>
             </div>
           </section>
 
-          <section class="card recents" aria-label="Recent contacts">
+          <section class="card recents" aria-label="Leads">
             <div class="card-head">
-              <h2>Recent contacts</h2>
-              <a href="#contacts" class="small">All contacts →</a>
+              <div class="tabs" role="tablist" aria-label="Leads">
+                <button role="tab" id="tab-list" data-action="leads-tab" data-tab="list">Lead list</button>
+                <button role="tab" id="tab-recent" data-action="leads-tab" data-tab="recent">Recent</button>
+              </div>
+              <a href="#contacts" class="small">Manage leads →</a>
             </div>
             <div id="qs-recents"></div>
           </section>
@@ -641,8 +654,11 @@
         if (lead.city) ui.qs.fields.city = lead.city;
         if (lead.notes) { ui.qs.details.notes = lead.notes; const n = $('#qs-d-notes'); if (n) n.value = lead.notes; }
         renderVars();
+        const saved = autoSaveLead();
+        if (saved) toast(`Saved ${contactLabel(saved)}${folderOf(saved) ? ' to ' + folderOf(saved).name : ''}`);
         updatePhoneHint();
         updatePreview();
+        renderRecents();
       }
       const firstEmpty = $$('#qs-vars input').find((el) => !el.value);
       (firstEmpty || $('#qs-open')).focus();
@@ -1017,7 +1033,7 @@
           ${schedulerHtml(o.contactId)}
           <div class="row">
             <button class="btn btn-ghost" data-action="fu-skip">No follow-up</button>
-            <button class="btn" data-action="qs-clear" title="Alt+N">Next lead →</button>
+            <button class="btn" data-action="qs-next" title="Alt+N">Next lead →</button>
           </div>
         </section>`;
     } else {
@@ -1025,32 +1041,152 @@
       box.innerHTML = `
         <section class="card after">
           <div class="after-title"><span class="dot dot-sent"></span> Done with <strong>${who}</strong>. ${due}</div>
-          <div class="row"><button class="btn btn-primary" data-action="qs-clear" title="Alt+N">Next lead →</button></div>
+          <div class="row"><button class="btn btn-primary" data-action="qs-next" title="Alt+N">Next lead →</button></div>
         </section>`;
-      const next = $('[data-action="qs-clear"]', box);
+      const next = $('[data-action="qs-next"]', box);
       if (next) next.focus();
     }
   }
 
+  /** Everything on Quick Send that depends on the lead data: counter, list bar, lead list. */
   function renderRecents() {
+    renderTopBar();
+    renderLeadsPanel();
+  }
+
+  // ---- Sent counter ----
+
+  function sentSinceReset() {
+    const since = db.settings.counterResetAt || '';
+    return db.outreach.filter((o) => o.status === 'sent' && o.sentAt && (!since || new Date(o.sentAt) > new Date(since))).length;
+  }
+
+  function sentToday() {
+    const today = L.localDate(new Date());
+    return db.outreach.filter((o) => o.status === 'sent' && o.sentAt && L.localDate(o.sentAt) === today).length;
+  }
+
+  // ---- Lead list (queue) ----
+
+  const queueFolderName = () => (ui.queue.folder === 'all' ? 'All leads' : ui.queue.folder === 'none' ? 'No folder' : (getFolder(ui.queue.folder) || {}).name || 'All leads');
+
+  /** Leads in the chosen folder, oldest first (the order they were added or pasted). */
+  function queueOrdered() {
+    if (ui.queue.folder !== 'all' && ui.queue.folder !== 'none' && !getFolder(ui.queue.folder)) ui.queue.folder = 'all';
+    return db.contacts
+      .filter((c) => ui.queue.folder === 'all' || (ui.queue.folder === 'none' ? !folderOf(c) : c.folderId === ui.queue.folder))
+      .slice()
+      .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id));
+  }
+
+  const queueMatches = (c) => ui.queue.filter === 'all' || !c.lastSentAt;
+
+  /** What the list shows: matching leads, plus the loaded lead so it stays visible after sending. */
+  function queueItems() {
+    return queueOrdered().filter((c) => queueMatches(c) || c.id === ui.qs.contactId);
+  }
+
+  /** The next (dir 1) or previous (dir -1) lead to contact, relative to the loaded one. */
+  function queueStep(dir) {
+    const list = queueOrdered();
+    const i = list.findIndex((c) => c.id === ui.qs.contactId);
+    const start = i < 0 ? (dir > 0 ? -1 : list.length) : i;
+    for (let j = start + dir; j >= 0 && j < list.length; j += dir) {
+      if (queueMatches(list[j]) && list[j].id !== ui.qs.contactId) return list[j];
+    }
+    return null;
+  }
+
+  function goQueue(dir) {
+    autoSaveLead();
+    const c = queueStep(dir);
+    if (c) { loadContact(c.id); return; }
+    if (dir > 0) {
+      clearQuickSend();
+      toast(`No more leads to contact in ${queueFolderName()}. The form is clear for a new number.`);
+    } else {
+      toast('This is the first lead in the list.');
+    }
+  }
+
+  /** Save what's typed in Quick Send as a lead (new or loaded), so moving on never loses it. */
+  function autoSaveLead() {
+    const qs = ui.qs;
+    const n = L.normalizePhone(qs.phone, db.settings.defaultCountryCode);
+    if (!n.ok) return null;
+    const f = qs.fields;
+    const typed = qs.contactId || [f.property_name, f.city, qs.details.name, qs.details.notes].some((v) => v && v.trim());
+    if (!typed) return null;
+    const c = upsertContact(n.digits, contactPatchFromQS());
+    applyQSFolder(c);
+    qs.contactId = c.id;
+    save();
+    return c;
+  }
+
+  function renderTopBar() {
+    const bar = $('#qs-top');
+    if (!bar) return;
+    const total = sentSinceReset();
+    const today = sentToday();
+    const since = db.settings.counterResetAt;
+    const items = queueItems();
+    const pos = items.findIndex((c) => c.id === ui.qs.contactId);
+    const left = queueOrdered().filter((c) => !c.lastSentAt).length;
+    bar.innerHTML = `
+      <div class="counter" role="group" aria-label="Messages sent">
+        <span class="counter-num" id="sent-count">${total}</span>
+        <span class="counter-label">sent<span class="muted small">${since ? 'since ' + esc(fmtDateTime(since)) : 'in total'} · ${today} today</span></span>
+        <button class="btn btn-sm btn-ghost" data-action="counter-reset" title="Start counting from zero. History is kept.">Reset</button>
+      </div>
+      <div class="queue-nav" role="group" aria-label="Lead list">
+        <select id="queue-folder" aria-label="Lead list folder">
+          <option value="all">All leads</option>
+          ${sortedFolders().map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}
+          <option value="none">No folder</option>
+        </select>
+        <select id="queue-filter" aria-label="Which leads to go through">
+          <option value="todo">Not sent yet</option>
+          <option value="all">All leads</option>
+        </select>
+        <span class="queue-pos">${pos >= 0 ? `Lead ${pos + 1} of ${items.length}` : `${left} to contact`}</span>
+        <button class="btn btn-sm" data-action="qs-prev" title="Alt+P">← Previous</button>
+        <button class="btn btn-sm btn-primary" data-action="qs-next" title="Alt+N">Next lead →</button>
+      </div>`;
+    const fs = $('#queue-folder', bar);
+    fs.value = ui.queue.folder;
+    fs.addEventListener('change', () => { ui.queue.folder = fs.value; saveQueuePrefs(); renderRecents(); });
+    const ff = $('#queue-filter', bar);
+    ff.value = ui.queue.filter;
+    ff.addEventListener('change', () => { ui.queue.filter = ff.value; saveQueuePrefs(); renderRecents(); });
+  }
+
+  function renderLeadsPanel() {
     const box = $('#qs-recents');
     if (!box) return;
-    const recents = db.contacts
+    const tab = ui.queue.tab === 'recent' ? 'recent' : 'list';
+    $$('[data-action="leads-tab"]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+    const list = tab === 'list' ? queueItems() : db.contacts
       .filter((c) => c.lastOpenedAt || c.lastSentAt)
       .sort((a, b) => (b.lastOpenedAt || b.lastSentAt || '').localeCompare(a.lastOpenedAt || a.lastSentAt || ''))
-      .slice(0, 8);
-    if (!recents.length) {
-      box.innerHTML = `<div class="empty small">Contacts you message will show up here — click one to reload it.</div>`;
+      .slice(0, 12);
+    if (!list.length) {
+      box.innerHTML = `<div class="empty small">${tab === 'recent' ? 'Leads you message will show up here.'
+        : db.contacts.length ? `Every lead in ${esc(queueFolderName())} has been messaged. Pick another folder, or show all leads.`
+          : 'No leads yet. Paste a list in Contacts → Paste leads, or type a number above.'}</div>`;
       return;
     }
-    box.innerHTML = `<ul class="recent-list">${recents.map((c) => {
+    box.innerHTML = `<ul class="recent-list ${tab === 'list' ? 'lead-queue' : ''}">${list.map((c) => {
       const st = contactStatus(c);
-      return `<li><button class="recent" data-action="load-contact" data-id="${c.id}">
-        <span class="recent-main"><strong>${esc(c.propertyName || c.name || '—')}</strong><span class="muted">${esc([c.propertyName ? c.name : '', c.city, folderOf(c) && folderOf(c).name].filter(Boolean).join(' · '))}</span></span>
+      const current = c.id === ui.qs.contactId;
+      return `<li><button class="recent ${current ? 'current' : ''}" data-action="queue-load" data-id="${c.id}" ${current ? 'aria-current="true"' : ''}>
+        <span class="recent-main"><strong>${esc(c.propertyName || c.name || '—')}</strong><span class="muted">${esc([c.propertyName ? c.name : '', c.city, tab === 'recent' || ui.queue.folder === 'all' ? folderOf(c) && folderOf(c).name : ''].filter(Boolean).join(' · '))}</span></span>
         <span class="recent-phone mono">${esc(L.formatPhone(c.phone))}</span>
-        <span class="recent-date"><span class="pill pill-${st.key}">${esc(st.label)}</span><span class="muted small">${esc(fmtRelative(c.lastSentAt || c.lastOpenedAt))}</span></span>
+        <span class="recent-date"><span class="pill pill-${st.key}">${esc(st.label)}</span>${c.lastSentAt || c.lastOpenedAt ? `<span class="muted small">${esc(fmtRelative(c.lastSentAt || c.lastOpenedAt))}</span>` : ''}</span>
       </button></li>`;
     }).join('')}</ul>`;
+    const cur = $('.recent.current', box);
+    if (cur && tab === 'list') cur.scrollIntoView({ block: 'nearest' });
   }
 
   function loadContact(id, { followUp = false } = {}) {
@@ -1604,6 +1740,7 @@
           folderId = f.id;
         }
         let added = 0; let updated = 0;
+        const batchStart = Date.now();
         for (const lead of parsed.leads) {
           const exists = contactByPhone(lead.phone);
           const patch = {};
@@ -1612,6 +1749,7 @@
             if (!exists || !exists[field]) patch[field] = lead[field];
           }
           const c = upsertContact(lead.phone, patch);
+          if (!exists) c.createdAt = new Date(batchStart + added).toISOString(); // keeps paste order in the lead list
           const target = folderId || (lead.folder ? ensureFolder(lead.folder).id : null);
           if (target) c.folderId = target;
           if (exists) updated++; else added++;
@@ -1619,6 +1757,7 @@
         save();
         closeModal();
         if (folderId) ui.folder = folderId;
+        ui.queue.folder = folderId || 'all'; saveQueuePrefs(); // Quick Send's lead list goes through what you just added
         if (ui.view === 'contacts') renderContacts(); else go('contacts');
         const f = getFolder(folderId);
         toast(`Added ${added} new ${added === 1 ? 'lead' : 'leads'}${updated ? `, updated ${updated}` : ''}${f ? ` in ${f.name}` : ''}${parsed.skipped.length ? ` · skipped ${parsed.skipped.length}` : ''}.`);
@@ -2068,6 +2207,7 @@
     'load-followup': (el) => loadContact(el.dataset.id, { followUp: true }),
     'load-contact': (el) => {
       if (!$('#modal').hidden) closeModal();
+      if (ui.view === 'contacts') { ui.queue.folder = ui.folder; saveQueuePrefs(); } // Next lead continues in this folder
       if (ui.view === 'send' && !ui.pending) {
         // Keep the chosen template (and any follow-up context for the same lead).
         const c = getContact(el.dataset.id);
@@ -2080,7 +2220,18 @@
     'use-template': (el) => selectTemplate(el.dataset.id),
     'edit-message': () => { ui.qs.override = currentMessage(); updatePreview(); const ta = $('#qs-override'); if (ta) ta.focus(); },
     'reset-edit': () => { ui.qs.override = null; updatePreview(); },
-    'qs-clear': () => clearQuickSend(),
+    'qs-clear': () => { autoSaveLead(); clearQuickSend(); },
+    'qs-next': () => goQueue(1),
+    'qs-prev': () => goQueue(-1),
+    'queue-load': (el) => { autoSaveLead(); loadContact(el.dataset.id); },
+    'leads-tab': (el) => { ui.queue.tab = el.dataset.tab; saveQueuePrefs(); renderLeadsPanel(); },
+    'counter-reset': () => {
+      const before = db.settings.counterResetAt;
+      const was = sentSinceReset();
+      db.settings.counterResetAt = nowIso();
+      save(); renderTopBar();
+      toastUndo(`Counter reset (was ${was})`, () => { db.settings.counterResetAt = before; save(); renderTopBar(); });
+    },
     'save-lead': () => saveLeadFromQS(),
 
     'history-filter': (el) => { ui.historyFilter = el.dataset.f; ui.historySelected.clear(); renderHistory(); },
@@ -2204,7 +2355,8 @@
     if (ui.view !== 'send' || !$('#modal').hidden) return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); openWhatsApp(); }
     else if (e.altKey && e.code === 'KeyS' && ui.pending && ui.pending.stage === 'confirm') { e.preventDefault(); markSent(ui.pending.outreachId); refreshSendAfterSent(); }
-    else if (e.altKey && e.code === 'KeyN') { e.preventDefault(); clearQuickSend(); }
+    else if (e.altKey && e.code === 'KeyN') { e.preventDefault(); goQueue(1); }
+    else if (e.altKey && e.code === 'KeyP') { e.preventDefault(); goQueue(-1); }
   });
 
   // Another tab changed the data (e.g. two console tabs open) — reload it.

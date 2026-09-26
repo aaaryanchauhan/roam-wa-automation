@@ -60,7 +60,7 @@ artifact, which blocks outside connections. There the app says so and runs witho
 
 | Screen | What it's for |
 | --- | --- |
-| **Quick Send** | The main screen. Type a number, pick a template, fill in the highlighted fields, then click **OPEN WHATSAPP →** (or press ⌘/Ctrl + Enter). Afterwards: **Mark as Sent**, then schedule a follow-up (3 / 5 / 7 days or a date), then **Next lead**. |
+| **Quick Send** | The main screen. Type a number (or pick the next lead from the list), pick a template, fill in the highlighted fields, then click **OPEN WHATSAPP →** (or press ⌘/Ctrl + Enter). Afterwards: **Mark as Sent**, schedule a follow-up (3 / 5 / 7 days or a date), then **Next lead →**. |
 | **Follow-ups** | Leads that are overdue, due today or coming up. **Load →** fills Quick Send with the contact, the follow-up template and the preview. Sending it completes the follow-up. |
 | **History** | Every chat you opened, with the message and its status. **Opened** means the chat was opened. **Sent** means you confirmed you pressed Send. |
 | **Contacts** | Every number you've messaged is saved here automatically. You can organize leads into named **folders** (create, rename, delete, and move several leads at once), **paste leads** straight from a spreadsheet, import a CSV, and export a folder to CSV. |
@@ -71,7 +71,29 @@ artifact, which blocks outside connections. There the app says so and runs witho
 
 - **⌘/Ctrl + Enter**: open WhatsApp
 - **Alt + S**: mark as sent
-- **Alt + N**: clear the form for the next lead
+- **Alt + N** / **Alt + P**: next / previous lead in the lead list
+
+### Working through a list of leads
+
+The bar at the top of Quick Send lets you go through a list without leaving the page:
+
+- **Choose the list:** pick a folder (or **All leads**) and whether to show only leads **Not sent yet**
+  or **All leads**.
+- **Move through it:** **Next lead →** and **← Previous** load leads in the order they were added
+  (pasted lists keep their order). After you mark a message as sent, **Next lead →** loads the
+  next lead that hasn't been messaged. At the end of the list, the form clears for a new number.
+- **Lead list tab:** shows the list, with the current lead highlighted. Click any lead to load it.
+  **Recent** shows who you messaged last.
+- **Where the list starts:** clicking **Message →** in Contacts, or pasting leads into a folder,
+  points the list at that folder, so **Next lead** carries on from there.
+- **Nothing is lost:** a lead you type or paste into Quick Send is saved as soon as you move on,
+  even if you never opened WhatsApp for it.
+
+### Sent counter
+
+The counter at the top left shows how many messages you've marked as sent since you last pressed
+**Reset**, and how many today. Resetting only restarts the count. Your history is kept, and the
+notification offers **Undo**. When you're signed in, the reset time is saved to your account.
 
 ## Templates and variables
 

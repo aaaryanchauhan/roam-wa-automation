@@ -86,9 +86,11 @@
     default_country_code: s.defaultCountryCode || '',
     open_mode: s.openMode || 'auto',
     last_template_id: orNull(s.lastTemplateId),
+    counter_reset_at: orNull(s.counterResetAt),
   });
   const settingsFromRow = (r) => ({
     defaultCountryCode: r.default_country_code, openMode: r.open_mode, lastTemplateId: r.last_template_id,
+    counterResetAt: r.counter_reset_at || null,
   });
 
   // ---------------------------------------------------------------------------

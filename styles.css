@@ -264,6 +264,18 @@ input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; accent
 .open-hint { margin-top: 8px; text-align: center; font-size: 13px; color: var(--muted); min-height: 19px; }
 
 /* ---------- Quick Send ---------- */
+.qs-top { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; margin-bottom: 16px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.counter { display: flex; align-items: center; gap: 10px; }
+.counter-num { font-size: 30px; font-weight: 800; line-height: 1; color: var(--wa); font-variant-numeric: tabular-nums; min-width: 1.2em; }
+.counter-label { display: grid; font-weight: 700; line-height: 1.2; }
+.queue-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.queue-nav select { width: auto; max-width: 200px; min-height: 32px; padding: 4px 8px; font-size: 14px; }
+.queue-pos { font-size: 13px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tabs { display: inline-flex; gap: 2px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 2px; }
+.tabs button { font: inherit; font-size: 14px; font-weight: 650; padding: 5px 12px; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.lead-queue { max-height: 440px; overflow: auto; }
+.recent.current { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .qs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 20px; align-items: start; }
 .qs-left, .qs-right { display: grid; gap: 16px; min-width: 0; }
 .qs-right { position: sticky; top: 76px; }
