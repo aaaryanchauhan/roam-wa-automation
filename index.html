@@ -23,6 +23,7 @@
       <a href="#templates" data-view="templates">Templates</a>
       <a href="#settings" data-view="settings" aria-label="Settings">Settings</a>
     </nav>
+    <span id="sync" class="sync" aria-live="polite"></span>
   </header>
 
   <main id="view" tabindex="-1"></main>
@@ -31,7 +32,10 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <noscript><p style="padding:24px">Roam Outreach needs JavaScript enabled.</p></noscript>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
   <script src="lib.js"></script>
+  <script src="cloud.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

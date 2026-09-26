@@ -159,6 +159,23 @@ main:focus { outline: none; }
 .nav a.active { color: var(--brand); background: var(--brand-soft); }
 .badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; display: inline-grid; place-items: center; }
 
+/* ---------- Sync + sign in ---------- */
+.sync { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.sync::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: currentColor; }
+.sync-off::before, .sync:empty::before { display: none; }
+.sync-synced { color: var(--pill-sent-text); }
+.sync-saving, .sync-loading { color: var(--muted); }
+.sync-error { color: var(--danger); }
+body.signed-out .nav, body.signed-out .sync { display: none; }
+.auth { max-width: 420px; margin: 40px auto; display: grid; gap: 14px; }
+.auth h1 { margin-bottom: 6px; }
+.auth form { margin-top: 18px; }
+.btn-block { width: 100%; min-height: 46px; font-size: 15px; }
+.center { text-align: center; }
+.muted-link { color: var(--muted); }
+.notice { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--pill-scheduled); color: var(--pill-scheduled-text); font-size: 14px; }
+.notice-err { background: var(--pill-due); color: var(--pill-due-text); }
+
 /* ---------- Layout ---------- */
 main { max-width: 1240px; margin: 0 auto; padding: 24px; }
 .page { display: grid; gap: 16px; }
@@ -221,6 +238,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; min-height: 0; accent
 .btn:hover { background: var(--surface-2); }
 .btn-primary { background: var(--brand); border-color: var(--brand); color: var(--surface); }
 .btn-primary:hover { background: var(--brand); filter: brightness(1.12); }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: var(--surface); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
 .btn-ghost:hover { color: var(--text); }
 .btn-sm { padding: 4px 10px; min-height: 30px; font-size: 13px; }

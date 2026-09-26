@@ -15,9 +15,36 @@ It has no build step and no dependencies. You can:
 - **Serve it locally** with `npm start` and go to http://localhost:5173, or
 - **Host it** on any static host (GitHub Pages, Netlify, Vercel, S3). Nothing runs on a server.
 
-All data (templates, contacts, history, follow-ups) is saved in the browser's `localStorage`,
-on this computer and in this browser only. Use **Settings → Export backup** to keep a copy
-or move to another machine. Each browser or URL keeps its own separate data.
+## Database (Supabase)
+
+When you sign in, templates, contacts, history, follow-ups and settings are saved to Supabase
+(project `dvfkktqonymradyybjqv`). The same data then shows up on any computer or phone where you sign in.
+
+- **Tables:** `wa_templates`, `wa_contacts`, `wa_outreach` and `wa_settings`. The schema is in
+  `supabase/migrations/`.
+- **Access:** row-level security means a signed-in user can only read and change their own rows.
+  Signed-out visitors can't read anything.
+- **Config:** the project URL and publishable key are in `config.js`. The publishable key is meant
+  to be public. Set `supabaseUrl` to `''` to turn the database off.
+- **First sign-in:** anything you already saved in that browser without an account is uploaded to
+  the new account.
+- **How saving works:** changes are kept in the browser first and saved to the database in the
+  background. The dot at the top right shows *Saved*, *Saving…* or *Not saved — retrying*.
+  When you come back to the tab, it reloads anything you changed on another device.
+- **Using it without an account:** click **Use without an account** on the sign-in screen.
+  Data then stays in that browser only.
+
+**Creating your account:** use **Create an account** on the sign-in screen. By default Supabase
+emails a confirmation link first. Supabase's built-in email service only delivers to members of
+the project's team, so sign up with the project owner's address, or turn off **Confirm email**
+under Authentication → Sign In / Providers → Email in the Supabase dashboard. If the link lands
+on a page that doesn't load, the confirmation still went through, so go back to the app and sign in.
+To stop other people creating accounts, turn off **Allow new users to sign up** in the same place
+once your account exists.
+
+**Where it works:** the database needs the page to be able to reach `*.supabase.co`. That works
+when you open `index.html` locally or host it on your own site. It doesn't work inside a claude.ai
+artifact, which blocks outside connections. There the app says so and runs without an account.
 
 ## Screens
 
@@ -90,4 +117,5 @@ npm test   # unit tests for phone normalization, templates, CSV and dates (Node 
 
 - `lib.js`: pure logic, unit tested in `test/`
 - `app.js`: UI, state and storage
+- `cloud.js`: Supabase sign-in and sync; `config.js` holds the project URL and key
 - `styles.css`: styles (light and dark)

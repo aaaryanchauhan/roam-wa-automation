@@ -3,7 +3,9 @@
   'use strict';
 
   const L = window.RoamLib;
+  const cloud = window.RoamCloud || { enabled: false };
   const STORE_KEY = 'roam-wa-console-v1';
+  const MODE_KEY = 'roam-wa-mode'; // 'local' when the user chose to skip signing in
 
   // ---------------------------------------------------------------------------
   // Defaults
@@ -109,7 +111,13 @@
   // Storage
   // ---------------------------------------------------------------------------
 
-  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const uid = () => {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  };
   const nowIso = () => new Date().toISOString();
 
   function seedTemplates() {
@@ -135,36 +143,164 @@
     };
   }
 
-  function load() {
+  /** Read a saved copy from this browser; null when there is none. */
+  function readLocal(key) {
     try {
-      const raw = localStorage.getItem(STORE_KEY);
+      const raw = localStorage.getItem(key);
       if (raw) {
-        const data = JSON.parse(raw);
-        const base = freshDb();
-        migrateTemplates(data);
-        return {
-          ...base,
-          ...data,
-          settings: { ...base.settings, ...(data.settings || {}) },
-        };
+        return JSON.parse(raw);
       }
     } catch (e) {
       console.warn('Could not read saved data', e);
     }
-    return freshDb();
+    return null;
   }
 
-  let db = load();
+  /** Fill in anything missing from older or partial data. */
+  function normalizeDb(data) {
+    migrateTemplates(data);
+    const base = freshDb();
+    return { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
+  }
+
+  // In cloud mode the browser copy is a per-user cache; in local mode it is the only copy.
+  let storeKey = STORE_KEY;
+  let db = freshDb();
   let storageOk = true;
 
   function save() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(db));
+      localStorage.setItem(storeKey, JSON.stringify(db));
       storageOk = true;
     } catch (e) {
-      if (storageOk) toast('Could not save — browser storage is unavailable. Export a backup from Settings.', 'warn');
+      if (storageOk && !cloudActive()) toast('Could not save — browser storage is unavailable. Export a backup from Settings.', 'warn');
       storageOk = false;
     }
+    if (cloudActive()) schedulePush();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cloud sync (Supabase)
+  // ---------------------------------------------------------------------------
+
+  const sync = { snapshot: null, timer: null, pushing: false, dirty: false, state: 'off', error: '' };
+  const cloudActive = () => !!(cloud.enabled && cloud.user && ui.ready);
+
+  function getMode() {
+    try { return localStorage.getItem(MODE_KEY) || 'cloud'; } catch (e) { return 'cloud'; }
+  }
+  function setMode(m) {
+    try { localStorage.setItem(MODE_KEY, m); } catch (e) { /* ignore */ }
+  }
+
+  function setSync(state, error) {
+    sync.state = state;
+    sync.error = error || '';
+    const el = $('#sync');
+    if (!el) return;
+    const labels = { off: '', loading: 'Loading…', saving: 'Saving…', synced: 'Saved', error: 'Not saved — retrying' };
+    el.textContent = labels[state] || '';
+    el.className = 'sync sync-' + state;
+    el.title = state === 'error' ? `Couldn’t reach the database (${sync.error}). Changes are kept in this browser and will be retried.` :
+      state === 'synced' ? 'All changes saved to the database' : '';
+  }
+
+  function schedulePush(delay) {
+    sync.dirty = true;
+    if (sync.state !== 'error') setSync('saving');
+    clearTimeout(sync.timer);
+    sync.timer = setTimeout(pushNow, delay == null ? 400 : delay);
+  }
+
+  async function pushNow() {
+    if (sync.pushing) { schedulePush(); return; }
+    sync.pushing = true;
+    sync.dirty = false;
+    try {
+      sync.snapshot = await cloud.push(db, sync.snapshot);
+      if (!sync.dirty) setSync('synced');
+    } catch (e) {
+      console.warn('Sync failed', e);
+      setSync('error', e.message || String(e));
+      schedulePush(8000);
+    } finally {
+      sync.pushing = false;
+    }
+  }
+
+  async function flushSync() {
+    if (!cloudActive()) return;
+    clearTimeout(sync.timer);
+    if (sync.dirty || sync.state === 'error') await pushNow();
+  }
+
+  /** Load the signed-in user's data, carrying over this browser's data on their first sign-in. */
+  async function startCloud() {
+    storeKey = STORE_KEY + ':' + cloud.user.id;
+    ui.auth = null;
+    setSync('loading');
+    try {
+      const remote = await cloud.pull();
+      if (remote.empty) {
+        const existing = readLocal(storeKey) || readLocal(STORE_KEY);
+        db = existing ? normalizeDb(existing) : freshDb();
+        sync.snapshot = null; // upload everything
+        ui.ready = true;
+        save();
+        await flushSync();
+        if (existing && (existing.contacts || []).length) toast(`Uploaded ${existing.contacts.length} contacts from this browser to your account.`);
+      } else {
+        const serverSnap = cloud.snapshot(remote.data); // before normalizing, which may upgrade templates
+        db = normalizeDb(remote.data);
+        sync.snapshot = serverSnap;
+        ui.ready = true;
+        save(); // caches locally and schedules a push
+        if (JSON.stringify(cloud.snapshot(db)) === JSON.stringify(serverSnap)) {
+          clearTimeout(sync.timer); sync.dirty = false; setSync('synced');
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load from the database', e);
+      const cached = readLocal(storeKey);
+      db = cached ? normalizeDb(cached) : freshDb();
+      sync.snapshot = null;
+      ui.ready = true;
+      setSync('error', e.message || String(e));
+      toast('Couldn’t reach the database — using this browser’s copy. Changes will sync when it’s back.', 'warn');
+      schedulePush(8000);
+    }
+    ui.qs = freshQS();
+    render();
+  }
+
+  /** Refresh from the database when coming back to the tab (e.g. after using another device). */
+  async function refreshFromCloud() {
+    if (!cloudActive() || sync.dirty || sync.pushing || sync.state === 'error') return;
+    if (ui.view === 'templates' || !$('#modal').hidden) return; // don't swap data under an open editor
+    try {
+      const remote = await cloud.pull();
+      if (sync.dirty || sync.pushing) return;
+      const next = normalizeDb(remote.data);
+      const snap = cloud.snapshot(next);
+      if (JSON.stringify(snap) === JSON.stringify(sync.snapshot)) return;
+      db = next;
+      sync.snapshot = snap;
+      try { localStorage.setItem(storeKey, JSON.stringify(db)); } catch (e) { /* cache only */ }
+      if (ui.view === 'send') { renderRecents(); updatePhoneHint(); } else render();
+      updateNavBadge();
+    } catch (e) { /* stay on the current copy */ }
+  }
+
+  function startLocal() {
+    storeKey = STORE_KEY;
+    const saved = readLocal(STORE_KEY);
+    db = saved ? normalizeDb(saved) : freshDb();
+    ui.auth = null;
+    ui.ready = true;
+    setSync('off');
+    save(); // Persist first-run seed data and any template migrations.
+    ui.qs = freshQS();
+    render();
   }
 
   // ---------------------------------------------------------------------------
@@ -261,6 +397,8 @@
   // ---------------------------------------------------------------------------
 
   const ui = {
+    ready: false, // data loaded (signed in, or browser-only mode)
+    auth: null, // { mode: 'signin' | 'signup', message } while signed out
     view: 'send',
     qs: freshQS(),
     pending: null, // { outreachId, stage: 'confirm' | 'followup' | 'done' }
@@ -298,6 +436,8 @@
   }
 
   function render() {
+    document.body.classList.toggle('signed-out', !ui.ready);
+    if (!ui.ready) { if (ui.auth) renderAuth(); return; }
     const v = location.hash.replace('#', '');
     ui.view = VIEWS[v] ? v : 'send';
     $$('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === ui.view));
@@ -1219,6 +1359,72 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Sign in
+  // ---------------------------------------------------------------------------
+
+  function renderAuth() {
+    const a = ui.auth;
+    const signup = a.mode === 'signup';
+    main().innerHTML = `
+      <div class="auth">
+        <section class="card">
+          <h1>${signup ? 'Create your account' : 'Sign in'}</h1>
+          <p class="muted">Your templates, leads, history and follow-ups are saved to Roam’s database, so they’re there on any computer or phone.</p>
+          ${a.message ? `<div class="notice ${a.error ? 'notice-err' : ''}" role="status">${esc(a.message)}</div>` : ''}
+          <form id="auth-form">
+            <div class="field"><label for="auth-email">Email</label>
+              <input id="auth-email" name="email" type="email" autocomplete="email" required value="${esc(a.email || '')}"></div>
+            <div class="field"><label for="auth-password">Password</label>
+              <input id="auth-password" name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="6" required></div>
+            <button class="btn btn-primary btn-block" type="submit" ${a.busy ? 'disabled' : ''}>${a.busy ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
+          </form>
+          <p class="small center">${signup
+            ? 'Already have an account? <button class="link" data-action="auth-mode" data-mode="signin">Sign in</button>'
+            : 'First time? <button class="link" data-action="auth-mode" data-mode="signup">Create an account</button>'}</p>
+        </section>
+        <p class="small center muted"><button class="link muted-link" data-action="use-local">Use without an account</button> — data stays in this browser only.</p>
+      </div>`;
+    const form = $('#auth-form');
+    $(a.email ? '#auth-password' : '#auth-email').focus();
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = form.email.value.trim();
+      const password = form.password.value;
+      ui.auth = { ...a, email, busy: true, message: '', error: false };
+      renderAuth();
+      try {
+        const session = signup ? await cloud.signUp(email, password) : await cloud.signIn(email, password);
+        if (session) { setMode('cloud'); await startCloud(); return; }
+        ui.auth = { mode: 'signin', email, message: 'Check your email and click the confirmation link, then sign in here.' };
+      } catch (err) {
+        const msg = /fetch|network|load failed/i.test(err.message) ? 'Can’t reach the database from here. Check your connection, or use the console without an account.'
+          : /invalid login/i.test(err.message) ? 'Wrong email or password.'
+          : /not confirmed/i.test(err.message) ? 'Confirm your email first — check your inbox for the link.'
+            : err.message || 'Something went wrong. Try again.';
+        ui.auth = { mode: a.mode, email, message: msg, error: true };
+      }
+      renderAuth();
+    });
+  }
+
+  async function signOut() {
+    try { await flushSync(); } catch (e) { /* keep going */ }
+    if (sync.dirty || sync.state === 'error') {
+      if (!(await ask('Some changes haven’t reached the database yet and will be lost if you sign out.', 'Sign out anyway'))) return;
+    }
+    clearTimeout(sync.timer);
+    await cloud.signOut();
+    try { localStorage.removeItem(storeKey); } catch (e) { /* ignore */ }
+    db = freshDb();
+    sync.snapshot = null; sync.dirty = false;
+    ui.ready = false;
+    ui.pending = null;
+    ui.auth = { mode: 'signin' };
+    setSync('off');
+    render();
+  }
+
+  // ---------------------------------------------------------------------------
   // Settings
   // ---------------------------------------------------------------------------
 
@@ -1243,9 +1449,20 @@
               .map(([v, l, d]) => `<label class="radio"><input type="radio" name="open-mode" value="${v}" ${s.openMode === v ? 'checked' : ''}> <span><strong>${l}</strong><br><span class="muted small">${d}</span></span></label>`).join('')}
           </fieldset>
         </section>
+        ${cloudActive() ? `
+        <section class="card">
+          <h2>Account</h2>
+          <p class="small">Signed in as <strong>${esc(cloud.user.email)}</strong>. Everything is saved to the database and available wherever you sign in.</p>
+          <div class="row"><button class="btn" data-action="sign-out">Sign out</button></div>
+        </section>` : cloud.enabled ? `
+        <section class="card">
+          <h2>Account</h2>
+          <p class="small">You’re using the console without an account, so data stays in this browser only. Sign in to save it to the database — this browser’s data is uploaded the first time you sign in to a new account.</p>
+          <div class="row"><button class="btn btn-primary" data-action="use-cloud">Sign in to sync</button></div>
+        </section>` : ''}
         <section class="card">
           <h2>Data</h2>
-          <p class="muted small">Everything is stored in this browser only (${db.contacts.length} contacts, ${db.outreach.length} outreach entries, ${db.templates.length} templates). Export a backup regularly, and use it to move to another computer.</p>
+          <p class="muted small">${cloudActive() ? 'Your account has' : 'This browser has'} ${db.contacts.length} contacts, ${db.outreach.length} outreach entries and ${db.templates.length} templates.${cloudActive() ? ' A backup file is a handy extra copy.' : ' Export a backup regularly, and use it to move to another computer.'}</p>
           <div class="row">
             <button class="btn" data-action="backup-export">Export backup (.json)</button>
             <button class="btn" data-action="backup-import">Restore backup…</button>
@@ -1284,6 +1501,24 @@
     root.hidden = true;
     root.innerHTML = '';
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+  }
+
+  /** In-page replacement for window.confirm(), which some hosts (e.g. sandboxed frames) silently refuse. */
+  function ask(message, confirmLabel, { danger = true } = {}) {
+    return new Promise((resolve) => {
+      openModal('Are you sure?', `
+        <p>${esc(message)}</p>
+        <div class="row-end">
+          <button class="btn btn-ghost" id="ask-no">Cancel</button>
+          <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="ask-yes">${esc(confirmLabel)}</button>
+        </div>`, (root) => {
+        const done = (v) => { closeModal(); resolve(v); };
+        $('#ask-yes', root).addEventListener('click', () => done(true));
+        $('#ask-no', root).addEventListener('click', () => done(false));
+        $$('[data-action="close-modal"]', root).forEach((el) => el.addEventListener('click', () => resolve(false)));
+        $('#ask-yes', root).focus();
+      });
+    });
   }
 
   function rescheduleModal(contactId) {
@@ -1402,16 +1637,16 @@
     'save-lead': () => saveLeadFromQS(),
 
     'history-filter': (el) => { ui.historyFilter = el.dataset.f; renderHistory(); },
-    'delete-outreach': (el) => {
-      if (!confirm('Delete this outreach entry?')) return;
+    'delete-outreach': async (el) => {
+      if (!(await ask('Delete this outreach entry?', 'Delete'))) return;
       db.outreach = db.outreach.filter((o) => o.id !== el.dataset.id);
       save(); renderHistory();
     },
 
     'edit-contact': (el) => editContactModal(el.dataset.id),
-    'delete-contact': (el) => {
+    'delete-contact': async (el) => {
       const c = getContact(el.dataset.id);
-      if (!c || !confirm(`Delete ${contactLabel(c)}? Their outreach history is kept.`)) return;
+      if (!c || !(await ask(`Delete ${contactLabel(c)}? Their outreach history is kept.`, 'Delete lead'))) return;
       db.contacts = db.contacts.filter((x) => x.id !== c.id);
       if (ui.qs.contactId === c.id) ui.qs.contactId = null;
       save(); renderContactsBody(); updateNavBadge();
@@ -1433,9 +1668,9 @@
       ui.tplSelected = copy.id; renderTemplateList(); renderTemplateEditor();
       toast('Template duplicated');
     },
-    'tpl-delete': () => {
+    'tpl-delete': async () => {
       const t = getTemplate(ui.tplSelected);
-      if (!t || !confirm(`Delete “${t.name}”? History entries keep their message text.`)) return;
+      if (!t || !(await ask(`Delete “${t.name}”? History entries keep their message text.`, 'Delete template'))) return;
       db.templates = db.templates.filter((x) => x.id !== t.id); save();
       ui.tplSelected = null; renderTemplates();
     },
@@ -1448,11 +1683,11 @@
     },
 
     'backup-export': () => download(`roam-whatsapp-backup-${L.localDate(new Date())}.json`, JSON.stringify(db, null, 2), 'application/json'),
-    'backup-import': () => pickFile('.json,application/json', (text) => {
+    'backup-import': () => pickFile('.json,application/json', async (text) => {
       try {
         const data = JSON.parse(text);
         if (!Array.isArray(data.templates) || !Array.isArray(data.contacts) || !Array.isArray(data.outreach)) throw new Error('bad');
-        if (!confirm(`Replace current data with this backup (${data.contacts.length} contacts, ${data.outreach.length} outreach entries)?`)) return;
+        if (!(await ask(`Replace current data with this backup (${data.contacts.length} contacts, ${data.outreach.length} outreach entries)?`, 'Replace data'))) return;
         db = { ...freshDb(), ...data, settings: { ...freshDb().settings, ...(data.settings || {}) } };
         save(); ui.qs = freshQS(); ui.pending = null; render();
         toast('Backup restored');
@@ -1464,12 +1699,16 @@
       db.templates.push(...missing); save();
       toast(missing.length ? `Added ${missing.length} default template(s)` : 'All default templates are already there');
     },
-    wipe: () => {
-      if (!confirm('Erase all contacts, history and templates from this browser? Export a backup first if unsure.')) return;
+    wipe: async () => {
+      if (!(await ask(`Erase all contacts, history and templates${cloudActive() ? ' from your account on every device' : ' from this browser'}? Export a backup first if unsure.`, 'Erase everything'))) return;
       db = freshDb(); save(); ui.qs = freshQS(); ui.pending = null; go('send');
       toast('All data erased');
     },
     'close-modal': () => closeModal(),
+    'auth-mode': (el) => { ui.auth = { mode: el.dataset.mode, email: ($('#auth-email') || {}).value || '' }; renderAuth(); },
+    'use-local': () => { setMode('local'); startLocal(); },
+    'use-cloud': () => { setMode('cloud'); ui.ready = false; ui.auth = { mode: 'signin' }; render(); },
+    'sign-out': () => signOut(),
   };
 
   document.addEventListener('click', (e) => {
@@ -1491,8 +1730,10 @@
 
   // Another tab changed the data (e.g. two console tabs open) — reload it.
   window.addEventListener('storage', (e) => {
-    if (e.key !== STORE_KEY) return;
-    db = load();
+    if (!ui.ready || e.key !== storeKey) return;
+    const next = readLocal(storeKey);
+    if (!next) return;
+    db = normalizeDb(next);
     if (ui.view !== 'send') render(); else { renderRecents(); updateNavBadge(); }
   });
 
@@ -1503,6 +1744,26 @@
     `<datalist id="pt-list">${PROPERTY_TYPES.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>` +
     `<datalist id="cat-list">${CATEGORIES.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>`);
 
-  save(); // Persist first-run seed data and any template migrations.
-  render();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromCloud(); });
+  window.addEventListener('beforeunload', (e) => {
+    if (cloudActive() && (sync.dirty || sync.pushing)) { pushNow(); e.preventDefault(); e.returnValue = ''; }
+  });
+
+  async function boot() {
+    if (!cloud.enabled || getMode() === 'local') { startLocal(); return; }
+    try {
+      const session = await cloud.getSession();
+      if (session) { await startCloud(); return; }
+    } catch (e) {
+      console.warn('Could not check the session', e);
+    }
+    ui.auth = { mode: 'signin' };
+    if (!(await cloud.reachable())) {
+      ui.auth.message = 'Can’t reach the database from this page, so signing in won’t work here. You can still use the console without an account.';
+      ui.auth.error = true;
+    }
+    render();
+  }
+
+  boot();
 })();
