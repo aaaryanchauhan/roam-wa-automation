@@ -117,10 +117,18 @@ Folders are named lists of leads, for example "Medellín villas" or "Tulum hotel
 one folder or none.
 
 - In **Contacts**, the sidebar lists your folders with how many leads each has.
-- Tick leads, then **Move to** another folder or **Delete** them.
+- Tick leads (or **Select all**), then **Move to** another folder or **Delete** them.
 - Deleting a folder keeps its leads. They move to **No folder**.
 - In **Quick Send**, the **Folder** picker decides which folder a new lead goes into, and it
   remembers your last choice.
+
+## Deleting
+
+Deleting happens straight away, with no confirmation. The notification that appears has an
+**Undo** button for 8 seconds. This covers single leads, several leads at once, folders,
+templates and history entries. In **History**, tick entries to delete several at once or mark
+them all as sent. Only erasing all data, restoring a backup, and signing out with unsaved
+changes still ask first, because those can't be undone.
 
 ## Pasting and importing leads
 

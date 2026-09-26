@@ -424,6 +424,7 @@
     qs: freshQS(),
     pending: null, // { outreachId, stage: 'confirm' | 'followup' | 'done' }
     historyFilter: 'all',
+    historySelected: new Set(), // outreach ids ticked in History
     historySearch: '',
     contactSearch: '',
     folder: 'all', // Contacts filter: 'all', 'none' or a folder id
@@ -596,7 +597,12 @@
       if (ui.qs.contactId) {
         const c = getContact(ui.qs.contactId);
         const n = L.normalizePhone(phone.value, db.settings.defaultCountryCode);
-        if (!c || c.phone !== n.digits) { ui.qs.contactId = null; ui.qs.isFollowUp = false; }
+        if (!c || c.phone !== n.digits) {
+          // A different number: drop the loaded lead's details so they don't end up on this one.
+          ui.qs.contactId = null;
+          ui.qs.isFollowUp = false;
+          clearLeadFields();
+        }
       }
       updatePhoneHint();
       updatePreview();
@@ -658,6 +664,21 @@
     }));
 
     if (qs.contactId) $('#qs-open').focus(); else phone.focus();
+  }
+
+  /** Empty the personalization fields and lead details (keeps the number, template and folder picker). */
+  function clearLeadFields() {
+    const qs = ui.qs;
+    qs.fields = {};
+    qs.details = { name: '', country: '', website: '', instagram: '', email: '', notes: '' };
+    qs.folderId = rememberedFolderId();
+    qs.override = null;
+    $$('[data-detail]').forEach((el) => { el.value = ''; });
+    const folderSel = $('#qs-folder');
+    if (folderSel) folderSel.innerHTML = folderOptions(qs.folderId);
+    const banner = $('.qs .banner');
+    if (banner) banner.remove();
+    renderVars();
   }
 
   function selectTemplate(id) {
@@ -1149,36 +1170,75 @@
           </div>
           <input id="history-search" type="search" placeholder="Search name, property, number…" value="${esc(ui.historySearch)}">
         </div>
+        <div id="history-bulk"></div>
         <section class="card flush"><div id="history-body"></div></section>
       </div>`;
     const s = $('#history-search');
     s.addEventListener('input', () => { ui.historySearch = s.value; renderHistoryBody(); });
+    $('#history-body').addEventListener('change', (e) => {
+      const box = e.target.closest('input[type="checkbox"]');
+      if (!box) return;
+      if (box.id === 'history-select-all') {
+        historyRows().forEach((o) => (box.checked ? ui.historySelected.add(o.id) : ui.historySelected.delete(o.id)));
+      } else if (box.dataset.hselect) {
+        if (box.checked) ui.historySelected.add(box.dataset.hselect); else ui.historySelected.delete(box.dataset.hselect);
+      }
+      renderHistoryBody();
+    });
     renderHistoryBody();
   }
 
-  function renderHistoryBody() {
+  function historyRows() {
     const q = ui.historySearch.trim().toLowerCase();
-    const rows = db.outreach.filter((o) => {
+    return db.outreach.filter((o) => {
       if (ui.historyFilter !== 'all' && o.status !== ui.historyFilter) return false;
       if (!q) return true;
       const c = getContact(o.contactId) || {};
       return [c.name || o.contactName, c.propertyName || o.propertyName, o.phone, o.templateName, o.message].join(' ').toLowerCase().includes(q);
     });
+  }
+
+  function renderHistoryBulk(rows) {
+    const bar = $('#history-bulk');
+    if (!bar) return;
+    const sel = [...ui.historySelected].map(getOutreach).filter(Boolean);
+    if (!sel.length) {
+      bar.innerHTML = rows.length ? '<div class="bulk bulk-idle"><span>Tick entries to delete or mark several at once.</span></div>' : '';
+      return;
+    }
+    const opened = sel.filter((o) => o.status === 'opened').length;
+    bar.innerHTML = `
+      <div class="bulk">
+        <strong>${sel.length} selected</strong>
+        ${opened ? `<button class="btn btn-sm btn-primary" data-action="history-bulk-sent">Mark ${opened} as sent</button>` : ''}
+        <button class="btn btn-sm btn-danger" data-action="history-bulk-delete">Delete ${plural(sel.length, 'entry', 'entries')}</button>
+        <button class="btn btn-sm btn-ghost" data-action="history-bulk-clear">Clear selection</button>
+      </div>`;
+  }
+
+  function renderHistoryBody() {
     const body = $('#history-body');
+    if (!body) return;
+    for (const id of ui.historySelected) if (!getOutreach(id)) ui.historySelected.delete(id);
+    const rows = historyRows();
+    renderHistoryBulk(rows);
     if (!rows.length) {
       body.innerHTML = `<div class="empty">${db.outreach.length ? 'Nothing matches.' : 'No outreach yet. Every time you open WhatsApp from Quick Send it’s logged here.'}</div>`;
       return;
     }
     body.innerHTML = `
       <div class="table-wrap"><table class="table">
-        <thead><tr><th>Date</th><th>Contact</th><th>Number</th><th>Template</th><th>Status</th><th class="right">Actions</th></tr></thead>
+        <thead><tr><th class="check"><input type="checkbox" id="history-select-all" aria-label="Select all entries shown"
+          ${rows.every((o) => ui.historySelected.has(o.id)) ? 'checked' : ''}></th><th>Date</th><th>Contact</th><th>Number</th><th>Template</th><th>Status</th><th class="right">Actions</th></tr></thead>
         <tbody>${rows.map((o) => {
           const c = getContact(o.contactId);
           const person = (c && c.name) || o.contactName || '';
           const prop = (c && c.propertyName) || o.propertyName || '';
           const name = prop || person || '—';
           const sub = prop ? [person, c && c.city].filter(Boolean).join(' · ') : '';
-          return `<tr>
+          const picked = ui.historySelected.has(o.id);
+          return `<tr class="${picked ? 'is-selected' : ''}">
+            <td class="check"><input type="checkbox" data-hselect="${o.id}" ${picked ? 'checked' : ''} aria-label="Select entry for ${esc(name)}"></td>
             <td class="nowrap">${esc(fmtDateTime(o.openedAt))}</td>
             <td><strong>${esc(name)}</strong>${sub ? `<div class="muted small">${esc(sub)}</div>` : ''}</td>
             <td class="mono nowrap">${esc(L.formatPhone(o.phone))}</td>
@@ -1358,14 +1418,20 @@
     const bar = $('#bulk-bar');
     if (!bar) return;
     const n = ui.selected.size;
-    if (!n) { bar.innerHTML = ''; return; }
+    const inView = contactsInView().length;
+    if (!n) {
+      bar.innerHTML = inView ? `<div class="bulk bulk-idle"><span>Tick leads to move or delete several at once.</span>
+        <button class="btn btn-sm btn-ghost" data-action="bulk-select-all">Select all ${inView}</button></div>` : '';
+      return;
+    }
     bar.innerHTML = `
       <div class="bulk">
         <strong>${n} selected</strong>
+        ${n < inView ? `<button class="btn btn-sm btn-ghost" data-action="bulk-select-all">Select all ${inView}</button>` : ''}
         <label class="bulk-move">Move to
           <select id="bulk-folder"><option value="" disabled selected>Choose folder…</option>${folderOptions(null, { none: 'No folder' }).replace('<option value="">', '<option value="__none">')}</select>
         </label>
-        <button class="btn btn-sm btn-ghost danger" data-action="bulk-delete">Delete</button>
+        <button class="btn btn-sm btn-danger" data-action="bulk-delete">Delete ${plural(n, 'lead', 'leads')}</button>
         <button class="btn btn-sm btn-ghost" data-action="bulk-clear">Clear selection</button>
       </div>`;
     $('#bulk-folder').addEventListener('change', async (e) => {
@@ -1857,6 +1923,69 @@
     toastTimer = setTimeout(() => { el.className = 'toast'; }, linkUrl ? 9000 : 3200);
   }
 
+  /** Toast with an Undo button; deletes happen immediately and can be reversed for a few seconds. */
+  function toastUndo(msg, undo) {
+    const el = $('#toast');
+    el.className = 'toast show';
+    el.innerHTML = `<span>${esc(msg)}</span> <button type="button" class="toast-btn">Undo</button>`;
+    let used = false;
+    $('.toast-btn', el).addEventListener('click', () => {
+      if (used) return;
+      used = true;
+      undo();
+      toast('Restored');
+    });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = 'toast'; }, 8000);
+  }
+
+  /** Re-render whatever is on screen after data changed. */
+  function refreshView() {
+    updateNavBadge();
+    if (ui.view === 'contacts') renderContactsBody();
+    else if (ui.view === 'history') renderHistory();
+    else if (ui.view === 'templates') renderTemplates();
+    else if (ui.view === 'followups') renderFollowUps();
+    else if (ui.view === 'send') { renderRecents(); updatePhoneHint(); }
+  }
+
+  /** Remove matching items from db[coll] and offer Undo, which puts them back where they were. */
+  function removeWithUndo(coll, match, message, { canRestore = () => true, afterUndo } = {}) {
+    const removed = [];
+    db[coll] = db[coll].filter((item, i) => (match(item) ? (removed.push([i, item]), false) : true));
+    if (!removed.length) return 0;
+    save();
+    refreshView();
+    toastUndo(message, () => {
+      for (const [i, item] of removed) {
+        if (db[coll].some((x) => x.id === item.id) || !canRestore(item)) continue;
+        db[coll].splice(Math.min(i, db[coll].length), 0, item);
+      }
+      if (afterUndo) afterUndo();
+      save();
+      refreshView();
+    });
+    return removed.length;
+  }
+
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const restorableContact = (c) => !contactByPhone(c.phone); // skip if the number was re-added meanwhile
+
+  function deleteContacts(ids) {
+    const set = new Set(ids);
+    const one = ids.length === 1 && getContact(ids[0]);
+    if (set.has(ui.qs.contactId)) ui.qs.contactId = null;
+    ids.forEach((id) => ui.selected.delete(id));
+    removeWithUndo('contacts', (c) => set.has(c.id), one ? `Deleted ${contactLabel(one)}` : `Deleted ${plural(ids.length, 'lead', 'leads')}`, { canRestore: restorableContact });
+  }
+
+  function deleteOutreach(ids) {
+    const set = new Set(ids);
+    ids.forEach((id) => ui.historySelected.delete(id));
+    if (ui.pending && set.has(ui.pending.outreachId)) ui.pending = null;
+    removeWithUndo('outreach', (o) => set.has(o.id), `Deleted ${plural(ids.length, 'history entry', 'history entries')}`);
+  }
+
   function download(name, content, type) {
     const blob = new Blob([content], { type });
     const a = document.createElement('a');
@@ -1954,22 +2083,20 @@
     'qs-clear': () => clearQuickSend(),
     'save-lead': () => saveLeadFromQS(),
 
-    'history-filter': (el) => { ui.historyFilter = el.dataset.f; renderHistory(); },
-    'delete-outreach': async (el) => {
-      if (!(await ask('Delete this outreach entry?', 'Delete'))) return;
-      db.outreach = db.outreach.filter((o) => o.id !== el.dataset.id);
-      save(); renderHistory();
+    'history-filter': (el) => { ui.historyFilter = el.dataset.f; ui.historySelected.clear(); renderHistory(); },
+    'delete-outreach': (el) => deleteOutreach([el.dataset.id]),
+    'history-bulk-clear': () => { ui.historySelected.clear(); renderHistoryBody(); },
+    'history-bulk-delete': () => deleteOutreach([...ui.historySelected]),
+    'history-bulk-sent': () => {
+      const ids = [...ui.historySelected].filter((id) => (getOutreach(id) || {}).status === 'opened');
+      ids.forEach((id) => markSent(id));
+      ui.historySelected.clear();
+      renderHistory();
+      toast(`Marked ${plural(ids.length, 'entry', 'entries')} as sent`);
     },
 
     'edit-contact': (el) => editContactModal(el.dataset.id),
-    'delete-contact': async (el) => {
-      const c = getContact(el.dataset.id);
-      if (!c || !(await ask(`Delete ${contactLabel(c)}? Their outreach history is kept.`, 'Delete lead'))) return;
-      db.contacts = db.contacts.filter((x) => x.id !== c.id);
-      if (ui.qs.contactId === c.id) ui.qs.contactId = null;
-      ui.selected.delete(c.id);
-      save(); renderContactsBody(); updateNavBadge();
-    },
+    'delete-contact': (el) => { if (getContact(el.dataset.id)) deleteContacts([el.dataset.id]); },
     'import-csv': () => pickFile('.csv,.tsv,.txt,text/csv,text/plain', (text) => pasteLeadsModal(text)),
     'paste-leads': () => pasteLeadsModal(''),
     'folder-open': (el) => {
@@ -1986,27 +2113,24 @@
       const name = await newFolderModal({ title: 'Rename folder', initial: f.name, submit: 'Rename' });
       if (name && name !== f.name) { f.name = name.slice(0, 80); save(); renderContactsBody(); toast('Folder renamed'); }
     },
-    'folder-delete': async (el) => {
+    'folder-delete': (el) => {
       const f = getFolder(el.dataset.id);
       if (!f) return;
-      const n = db.contacts.filter((c) => c.folderId === f.id).length;
-      if (!(await ask(`Delete the folder “${f.name}”?${n ? ` Its ${n} ${n === 1 ? 'lead stays' : 'leads stay'} in your contacts under No folder.` : ''}`, 'Delete folder'))) return;
-      db.contacts.forEach((c) => { if (c.folderId === f.id) c.folderId = null; });
-      db.folders = db.folders.filter((x) => x.id !== f.id);
+      const members = db.contacts.filter((c) => c.folderId === f.id).map((c) => c.id);
+      members.forEach((id) => { getContact(id).folderId = null; });
       if (ui.qs.folderId === f.id) ui.qs.folderId = '';
       ui.folder = 'all';
-      save(); renderContactsBody();
-      toast('Folder deleted');
+      removeWithUndo('folders', (x) => x.id === f.id,
+        `Deleted folder ${f.name}${members.length ? ` · ${plural(members.length, 'lead', 'leads')} moved to No folder` : ''}`, {
+          afterUndo: () => {
+            members.forEach((id) => { const c = getContact(id); if (c && !c.folderId) c.folderId = f.id; });
+            ui.folder = f.id;
+          },
+        });
     },
     'bulk-clear': () => { ui.selected.clear(); renderContactsBody(); },
-    'bulk-delete': async () => {
-      const ids = [...ui.selected];
-      if (!(await ask(`Delete ${ids.length} ${ids.length === 1 ? 'lead' : 'leads'}? Their outreach history is kept.`, 'Delete leads'))) return;
-      db.contacts = db.contacts.filter((c) => !ui.selected.has(c.id));
-      ui.selected.clear();
-      save(); renderContactsBody(); updateNavBadge();
-      toast(`Deleted ${ids.length} ${ids.length === 1 ? 'lead' : 'leads'}`);
-    },
+    'bulk-delete': () => deleteContacts([...ui.selected]),
+    'bulk-select-all': () => { contactsInView().forEach((c) => ui.selected.add(c.id)); renderContactsBody(); },
     'export-csv': () => exportCSV(),
 
     'tpl-select': (el) => { ui.tplSelected = el.dataset.id; renderTemplateList(); renderTemplateEditor(); },
@@ -2023,11 +2147,11 @@
       ui.tplSelected = copy.id; renderTemplateList(); renderTemplateEditor();
       toast('Template duplicated');
     },
-    'tpl-delete': async () => {
+    'tpl-delete': () => {
       const t = getTemplate(ui.tplSelected);
-      if (!t || !(await ask(`Delete “${t.name}”? History entries keep their message text.`, 'Delete template'))) return;
-      db.templates = db.templates.filter((x) => x.id !== t.id); save();
-      ui.tplSelected = null; renderTemplates();
+      if (!t) return;
+      ui.tplSelected = null;
+      removeWithUndo('templates', (x) => x.id === t.id, `Deleted ${t.name}`, { afterUndo: () => { ui.tplSelected = t.id; } });
     },
     'tpl-insert': (el) => insertAtCursor($('#tpl-body'), `{{${el.dataset.var}}}`),
     'tpl-use': () => {

@@ -362,6 +362,7 @@ mark.v-missing { background: var(--mark-missing); color: var(--mark-missing-text
 .folder-chip:hover { border-color: var(--accent); color: var(--accent); }
 .folder-field select { max-width: 320px; }
 .bulk { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-radius: 10px; background: var(--brand-soft); color: var(--brand); }
+.bulk-idle { background: transparent; color: var(--muted); padding: 2px 0; font-size: 13px; }
 .bulk-move { display: inline-flex; align-items: center; gap: 8px; color: var(--brand); font-size: 14px; }
 .bulk-move select { width: auto; min-height: 32px; padding: 4px 8px; }
 .table .check { width: 36px; padding-right: 0; }
@@ -423,6 +424,8 @@ mark.v-missing { background: var(--mark-missing); color: var(--mark-missing-text
 .toast a { color: #7fe3a8; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .toast-warn { background: #7a3d00; }
+.toast-btn { margin-left: 10px; font: inherit; font-weight: 700; color: #7fe3a8; background: none; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+.toast-btn:hover { background: rgba(255, 255, 255, 0.1); }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 920px) {
