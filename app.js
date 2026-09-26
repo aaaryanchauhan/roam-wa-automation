@@ -5,6 +5,8 @@
   const L = window.RoamLib;
   const cloud = window.RoamCloud || { enabled: false };
   const STORE_KEY = 'roam-wa-console-v1';
+  // Bump on each release so you can tell which version a deployment is serving (shown in Settings).
+  const APP_VERSION = '1.5 — lead list, sent counter, folders';
   const MODE_KEY = 'roam-wa-mode'; // 'local' when the user chose to skip signing in
 
   // ---------------------------------------------------------------------------
@@ -1988,6 +1990,7 @@
           </div>
           <div class="row"><button class="btn btn-ghost danger" data-action="wipe">Erase all data…</button></div>
         </section>
+        <p class="muted small center" id="app-version">Roam Outreach version ${esc(APP_VERSION)}</p>
       </div>`;
     const cc = $('#set-cc');
     cc.addEventListener('input', () => {
