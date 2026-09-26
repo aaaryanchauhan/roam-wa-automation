@@ -60,3 +60,36 @@ test('firstName', () => {
   assert.equal(L.firstName('  Carlos  Restrepo '), 'Carlos');
   assert.equal(L.firstName(''), '');
 });
+
+test('parseLeads reads plain lines: phone found anywhere, then property, location', () => {
+  const r = L.parseLeads('Casa Libia, +57 300 123 4567, Medellín\n+57 310 555 0101, Villa Serena, Cartagena, 6 rooms, pool\nno number here');
+  assert.deepEqual(r.leads, [
+    { propertyName: 'Casa Libia', city: 'Medellín', phone: '573001234567' },
+    { propertyName: 'Villa Serena', city: 'Cartagena', notes: '6 rooms · pool', phone: '573105550101' },
+  ]);
+  assert.equal(r.skipped.length, 1);
+  assert.equal(r.skipped[0].reason, 'No phone number found');
+  assert.equal(r.hasHeader, false);
+});
+
+test('parseLeads reads tab-separated spreadsheet rows with headers in any order', () => {
+  const text = 'Location\tWhatsApp\tProperty Name\tFolder\nTulum\t+52 998 123 4567\tHotel Azul\tMexico hotels\nTulum\t998 000\tBad Number\t\n';
+  const r = L.parseLeads(text);
+  assert.equal(r.hasHeader, true);
+  assert.deepEqual(r.leads, [{ city: 'Tulum', propertyName: 'Hotel Azul', folder: 'Mexico hotels', phone: '529981234567' }]);
+  assert.equal(r.skipped.length, 1);
+});
+
+test('parseLeads applies the default country code, merges duplicates and handles semicolons', () => {
+  const r = L.parseLeads('300 123 4567; Casa Libia\n+57 300 123 4567; ; Medellín', '57');
+  assert.equal(r.leads.length, 1);
+  assert.equal(r.leads[0].phone, '573001234567');
+  assert.equal(r.leads[0].propertyName, 'Casa Libia');
+  assert.equal(r.leads[0].city, 'Medellín');
+});
+
+test('looksLikePhone', () => {
+  assert.equal(L.looksLikePhone('+57 (300) 123-4567'), true);
+  assert.equal(L.looksLikePhone('Casa 12345678'), false);
+  assert.equal(L.looksLikePhone('2024'), false);
+});

@@ -136,6 +136,7 @@
   function freshDb() {
     return {
       version: 1,
+      folders: [],
       templates: seedTemplates(),
       contacts: [],
       outreach: [],
@@ -312,6 +313,26 @@
   const getOutreach = (id) => db.outreach.find((o) => o.id === id);
   const contactByPhone = (digits) => (digits ? db.contacts.find((c) => c.phone === digits) : null);
   const activeTemplates = () => db.templates.filter((t) => t.active);
+  const getFolder = (id) => (id ? (db.folders || []).find((f) => f.id === id) : null);
+  const folderOf = (c) => getFolder(c.folderId);
+  const sortedFolders = () => (db.folders || []).slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+  /** Find a folder by name (case-insensitive) or create it. */
+  function ensureFolder(name) {
+    const clean = String(name || '').trim().slice(0, 80);
+    if (!clean) return null;
+    const found = db.folders.find((f) => f.name.toLowerCase() === clean.toLowerCase());
+    if (found) return found;
+    const f = { id: uid(), name: clean, createdAt: nowIso() };
+    db.folders.push(f);
+    return f;
+  }
+
+  function folderOptions(selectedId, { none = 'No folder', allowNew = true } = {}) {
+    return `<option value="">${esc(none)}</option>` +
+      sortedFolders().map((f) => `<option value="${f.id}"${f.id === selectedId ? ' selected' : ''}>${esc(f.name)}</option>`).join('') +
+      (allowNew ? '<option value="__new">+ New folder…</option>' : '');
+  }
 
   function defaultTemplateId() {
     const last = getTemplate(db.settings.lastTemplateId);
@@ -405,8 +426,18 @@
     historyFilter: 'all',
     historySearch: '',
     contactSearch: '',
+    folder: 'all', // Contacts filter: 'all', 'none' or a folder id
+    selected: new Set(), // contact ids ticked in the Contacts table
     tplSelected: null,
   };
+
+  const LAST_FOLDER_KEY = 'roam-wa-last-folder';
+  function rememberedFolderId() {
+    try { const id = localStorage.getItem(LAST_FOLDER_KEY); return id && getFolder(id) ? id : ''; } catch (e) { return ''; }
+  }
+  function rememberFolderId(id) {
+    try { localStorage.setItem(LAST_FOLDER_KEY, id || ''); } catch (e) { /* ignore */ }
+  }
 
   function freshQS(templateId) {
     return {
@@ -415,6 +446,7 @@
       fields: {},
       details: { name: '', country: '', website: '', instagram: '', email: '', notes: '' },
       contactId: null,
+      folderId: rememberedFolderId(),
       isFollowUp: false,
       override: null, // manually edited message text
     };
@@ -496,6 +528,10 @@
               <select id="qs-template">${templateOptions(qs.templateId, { placeholder: activeTemplates().length ? null : 'No active templates' })}</select>
             </div>
             <div id="qs-vars" class="vars-grid"></div>
+            <div class="field folder-field">
+              <label for="qs-folder">Folder</label>
+              <select id="qs-folder">${folderOptions(qs.folderId)}</select>
+            </div>
             <details class="more" id="qs-details">
               <summary>Lead details <span class="muted">(optional)</span></summary>
               <div class="vars-grid">
@@ -568,6 +604,43 @@
     phone.addEventListener('blur', () => maybeAutofillKnown());
 
     $('#qs-template').addEventListener('change', (e) => selectTemplate(e.target.value));
+
+    const folderSel = $('#qs-folder');
+    folderSel.addEventListener('change', async () => {
+      let id = folderSel.value;
+      if (id === '__new') {
+        const f = await newFolderModal();
+        id = f ? f.id : ui.qs.folderId;
+        folderSel.innerHTML = folderOptions(id);
+        folderSel.focus();
+      }
+      ui.qs.folderId = id;
+      rememberFolderId(id);
+    });
+
+    // Pasting a whole lead ("Casa Libia, +57 300 123 4567, Medellín") into the number box fills the form.
+    phone.addEventListener('paste', (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      if (!text || L.looksLikePhone(text)) return;
+      const parsed = L.parseLeads(text, db.settings.defaultCountryCode);
+      if (parsed.leads.length > 1) { e.preventDefault(); pasteLeadsModal(text); return; }
+      if (parsed.leads.length !== 1) return;
+      e.preventDefault();
+      const lead = parsed.leads[0];
+      const known = contactByPhone(lead.phone);
+      if (known) { fillFromContact(known); } else {
+        ui.qs.phone = L.formatPhone(lead.phone);
+        phone.value = ui.qs.phone;
+        if (lead.propertyName) ui.qs.fields.property_name = lead.propertyName;
+        if (lead.city) ui.qs.fields.city = lead.city;
+        if (lead.notes) { ui.qs.details.notes = lead.notes; const n = $('#qs-d-notes'); if (n) n.value = lead.notes; }
+        renderVars();
+        updatePhoneHint();
+        updatePreview();
+      }
+      const firstEmpty = $$('#qs-vars input').find((el) => !el.value);
+      (firstEmpty || $('#qs-open')).focus();
+    });
 
     $$('[data-detail]').forEach((el) => el.addEventListener('input', () => {
       ui.qs.details[el.dataset.detail] = el.value;
@@ -672,7 +745,10 @@
     qs.fields = { ...(c.extra || {}) };
     for (const [k, meta] of Object.entries(KNOWN_VARS)) qs.fields[k] = meta.from(c) || '';
     qs.details = { name: c.name || '', country: c.country || '', website: c.website || '', instagram: c.instagram || '', email: c.email || '', notes: c.notes || '' };
+    qs.folderId = folderOf(c) ? c.folderId : '';
     qs.override = null;
+    const folderSel = $('#qs-folder');
+    if (folderSel) folderSel.innerHTML = folderOptions(qs.folderId);
     const phone = $('#qs-phone');
     if (phone) phone.value = qs.phone;
     for (const [k, v] of Object.entries(qs.details)) { const el = $(`[data-detail="${k}"]`); if (el) el.value = v; }
@@ -801,6 +877,12 @@
     };
   }
 
+  /** Put the lead in the folder picked in Quick Send. An existing lead that wasn't loaded keeps its folder unless one is picked. */
+  function applyQSFolder(c) {
+    const picked = getFolder(ui.qs.folderId) ? ui.qs.folderId : null;
+    if (picked || ui.qs.contactId === c.id || !c.folderId) c.folderId = picked;
+  }
+
   function openWhatsApp() {
     const qs = ui.qs;
     const btn = $('#qs-open');
@@ -811,6 +893,7 @@
     openUrl(L.buildWhatsAppUrl(n.digits, msg, mode), mode);
 
     const c = upsertContact(n.digits, { ...contactPatchFromQS(), lastOpenedAt: nowIso() });
+    applyQSFolder(c);
     const t = getTemplate(qs.templateId);
     const o = {
       id: uid(),
@@ -942,7 +1025,7 @@
     box.innerHTML = `<ul class="recent-list">${recents.map((c) => {
       const st = contactStatus(c);
       return `<li><button class="recent" data-action="load-contact" data-id="${c.id}">
-        <span class="recent-main"><strong>${esc(c.propertyName || c.name || '—')}</strong><span class="muted">${esc(c.propertyName ? [c.name, c.city].filter(Boolean).join(' · ') : c.city || '')}</span></span>
+        <span class="recent-main"><strong>${esc(c.propertyName || c.name || '—')}</strong><span class="muted">${esc([c.propertyName ? c.name : '', c.city, folderOf(c) && folderOf(c).name].filter(Boolean).join(' · '))}</span></span>
         <span class="recent-phone mono">${esc(L.formatPhone(c.phone))}</span>
         <span class="recent-date"><span class="pill pill-${st.key}">${esc(st.label)}</span><span class="muted small">${esc(fmtRelative(c.lastSentAt || c.lastOpenedAt))}</span></span>
       </button></li>`;
@@ -974,6 +1057,7 @@
     qs.fields = { ...(c.extra || {}) };
     for (const [k, meta] of Object.entries(KNOWN_VARS)) qs.fields[k] = meta.from(c) || '';
     qs.details = { name: c.name || '', country: c.country || '', website: c.website || '', instagram: c.instagram || '', email: c.email || '', notes: c.notes || '' };
+    qs.folderId = folderOf(c) ? c.folderId : '';
   }
 
   function clearQuickSend() {
@@ -987,6 +1071,7 @@
     const n = L.normalizePhone(ui.qs.phone, db.settings.defaultCountryCode);
     if (!n.ok) { toast('Enter a valid WhatsApp number to save the lead.', 'warn'); $('#qs-phone').focus(); return; }
     const c = upsertContact(n.digits, contactPatchFromQS());
+    applyQSFolder(c);
     ui.qs.contactId = c.id;
     save();
     updatePhoneHint();
@@ -1117,74 +1202,238 @@
   // Contacts
   // ---------------------------------------------------------------------------
 
+  function folderCounts() {
+    const counts = { all: db.contacts.length, none: 0 };
+    for (const c of db.contacts) {
+      const f = folderOf(c);
+      if (f) counts[f.id] = (counts[f.id] || 0) + 1; else counts.none++;
+    }
+    return counts;
+  }
+
+  function contactsInView() {
+    const q = ui.contactSearch.trim().toLowerCase();
+    return db.contacts
+      .filter((c) => ui.folder === 'all' || (ui.folder === 'none' ? !folderOf(c) : c.folderId === ui.folder))
+      .filter((c) => !q || CONTACT_FIELDS.map(([k]) => c[k]).concat(folderOf(c) ? folderOf(c).name : '').join(' ').toLowerCase().includes(q))
+      .sort((a, b) => (b.lastOpenedAt || b.createdAt || '').localeCompare(a.lastOpenedAt || a.createdAt || ''));
+  }
+
   function renderContacts() {
+    if (ui.folder !== 'all' && ui.folder !== 'none' && !getFolder(ui.folder)) ui.folder = 'all';
     main().innerHTML = `
       <div class="page">
         <div class="page-head">
           <h1>Contacts</h1>
-          <p class="muted">Every number you open WhatsApp for is remembered here. Adding details is optional.</p>
+          <p class="muted">Sort leads into folders, paste lists straight from a spreadsheet, and message any lead in one click.</p>
         </div>
-        <div class="toolbar">
-          <input id="contact-search" type="search" placeholder="Search leads…" value="${esc(ui.contactSearch)}">
-          <span class="spacer"></span>
-          <button class="btn" data-action="import-csv">Import CSV</button>
-          <button class="btn" data-action="export-csv">Export CSV</button>
-          <button class="btn btn-primary" data-action="edit-contact">+ Add lead</button>
+        <div class="contacts-layout">
+          <aside class="card flush folders-card" aria-label="Folders">
+            <div class="card-head pad"><h2>Folders</h2><button class="btn btn-sm" data-action="folder-new">+ New</button></div>
+            <ul class="folder-list" id="folder-list"></ul>
+          </aside>
+          <div class="contacts-main">
+            <div class="folder-head" id="folder-head"></div>
+            <div class="toolbar">
+              <input id="contact-search" type="search" placeholder="Search leads…" value="${esc(ui.contactSearch)}">
+              <span class="spacer"></span>
+              <button class="btn btn-primary" data-action="paste-leads">Paste leads</button>
+              <button class="btn" data-action="import-csv">Import CSV</button>
+              <button class="btn" data-action="export-csv">Export CSV</button>
+              <button class="btn" data-action="edit-contact">+ Add lead</button>
+            </div>
+            <div id="bulk-bar"></div>
+            <section class="card flush"><div id="contacts-body"></div></section>
+          </div>
         </div>
-        <section class="card flush"><div id="contacts-body"></div></section>
       </div>`;
     const s = $('#contact-search');
     s.addEventListener('input', () => { ui.contactSearch = s.value; renderContactsBody(); });
+    const body = $('#contacts-body');
+    body.addEventListener('change', (e) => {
+      const box = e.target.closest('input[type="checkbox"]');
+      if (!box) return;
+      if (box.id === 'select-all') {
+        const ids = contactsInView().map((c) => c.id);
+        ids.forEach((id) => (box.checked ? ui.selected.add(id) : ui.selected.delete(id)));
+        $$('input[data-select]', body).forEach((el) => { el.checked = box.checked; });
+      } else if (box.dataset.select) {
+        if (box.checked) ui.selected.add(box.dataset.select); else ui.selected.delete(box.dataset.select);
+        syncSelectAll();
+      }
+      renderBulkBar();
+    });
     renderContactsBody();
   }
 
+  /** Re-render everything on the Contacts page that depends on the data. */
   function renderContactsBody() {
-    const q = ui.contactSearch.trim().toLowerCase();
-    const rows = db.contacts
-      .filter((c) => !q || CONTACT_FIELDS.map(([k]) => c[k]).join(' ').toLowerCase().includes(q))
-      .sort((a, b) => (b.lastOpenedAt || b.createdAt || '').localeCompare(a.lastOpenedAt || a.createdAt || ''));
+    if (ui.view !== 'contacts' || !$('#contacts-body')) return;
+    for (const id of ui.selected) if (!getContact(id)) ui.selected.delete(id);
+    renderFolderList();
+    renderFolderHead();
+    renderBulkBar();
+    const rows = contactsInView();
     const body = $('#contacts-body');
     if (!rows.length) {
-      body.innerHTML = `<div class="empty">${db.contacts.length ? 'Nothing matches.' : 'No contacts yet. Open WhatsApp from Quick Send, add a lead, or import a CSV of your lead database.'}</div>`;
+      body.innerHTML = `<div class="empty">${ui.contactSearch.trim() ? 'No leads match your search.'
+        : !db.contacts.length ? 'No leads yet. Paste a list from a spreadsheet, import a CSV, or just open WhatsApp from Quick Send.'
+          : ui.folder === 'none' ? 'Every lead is in a folder.'
+            : 'This folder is empty. Paste leads into it, or select leads in another folder and move them here.'}</div>`;
       return;
     }
+    const showFolder = ui.folder === 'all';
+    const showContact = rows.some((c) => c.name || c.notes); // you may only track properties
     body.innerHTML = `
       <div class="table-wrap"><table class="table">
-        <thead><tr><th>Property</th><th>Contact</th><th>Number</th><th>Location</th><th>Type</th><th>Last contacted</th><th>Status</th><th class="right">Actions</th></tr></thead>
+        <thead><tr>
+          <th class="check"><input type="checkbox" id="select-all" aria-label="Select all leads shown"></th>
+          <th>Property</th>${showContact ? '<th>Contact</th>' : ''}<th>Number</th><th>Location</th>${showFolder ? '<th>Folder</th>' : ''}<th>Last contacted</th><th>Status</th><th class="right">Actions</th>
+        </tr></thead>
         <tbody>${rows.map((c) => {
           const st = contactStatus(c);
+          const f = folderOf(c);
           const links = [
             c.website ? `<a href="${esc(/^https?:/.test(c.website) ? c.website : 'https://' + c.website)}" target="_blank" rel="noopener">web</a>` : '',
             c.instagram ? `<a href="https://instagram.com/${esc(c.instagram.replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//, ''))}" target="_blank" rel="noopener">ig</a>` : '',
             c.email ? `<a href="mailto:${esc(c.email)}">email</a>` : '',
           ].filter(Boolean).join(' · ');
-          return `<tr>
+          return `<tr class="${ui.selected.has(c.id) ? 'is-selected' : ''}">
+            <td class="check"><input type="checkbox" data-select="${c.id}" ${ui.selected.has(c.id) ? 'checked' : ''} aria-label="Select ${esc(contactLabel(c))}"></td>
             <td><strong>${esc(c.propertyName || '—')}</strong>${links ? `<div class="small">${links}</div>` : ''}</td>
-            <td>${esc(c.name || '')}${c.notes ? `<div class="muted small clamp" title="${esc(c.notes)}">${esc(c.notes)}</div>` : ''}</td>
+            ${showContact ? `<td>${esc(c.name || '')}${c.notes ? `<div class="muted small clamp" title="${esc(c.notes)}">${esc(c.notes)}</div>` : ''}</td>` : ''}
             <td class="mono nowrap">${esc(L.formatPhone(c.phone))}</td>
             <td>${esc([c.city, c.country].filter(Boolean).join(', '))}</td>
-            <td>${esc(c.propertyType || '')}</td>
+            ${showFolder ? `<td>${f ? `<button class="folder-chip" data-action="folder-open" data-id="${f.id}">${esc(f.name)}</button>` : '<span class="muted small">—</span>'}</td>` : ''}
             <td class="nowrap">${esc(fmtRelative(c.lastSentAt || c.lastOpenedAt))}</td>
             <td><span class="pill pill-${st.key}">${esc(st.label)}</span></td>
             <td class="right nowrap">
               <button class="btn btn-sm btn-primary" data-action="load-contact" data-id="${c.id}">Message →</button>
               <button class="btn btn-sm" data-action="edit-contact" data-id="${c.id}">Edit</button>
-              <button class="btn btn-sm btn-ghost danger" data-action="delete-contact" data-id="${c.id}" aria-label="Delete contact">✕</button>
+              <button class="btn btn-sm btn-ghost danger" data-action="delete-contact" data-id="${c.id}" aria-label="Delete ${esc(contactLabel(c))}">✕</button>
             </td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>
-      <div class="table-foot muted small">${rows.length} of ${db.contacts.length} contacts</div>`;
+      <div class="table-foot muted small">${rows.length} ${rows.length === 1 ? 'lead' : 'leads'}${ui.folder === 'all' ? '' : ` in this ${ui.folder === 'none' ? 'view' : 'folder'}`} · ${db.contacts.length} in total</div>`;
+    syncSelectAll();
+  }
+
+  function syncSelectAll() {
+    const all = $('#select-all');
+    if (!all) return;
+    const ids = contactsInView().map((c) => c.id);
+    const n = ids.filter((id) => ui.selected.has(id)).length;
+    all.checked = n > 0 && n === ids.length;
+    all.indeterminate = n > 0 && n < ids.length;
+    $$('#contacts-body tr').forEach((tr) => {
+      const box = $('input[data-select]', tr);
+      if (box) tr.classList.toggle('is-selected', box.checked);
+    });
+  }
+
+  function renderFolderList() {
+    const list = $('#folder-list');
+    if (!list) return;
+    const counts = folderCounts();
+    const item = (id, name, cls = '') => `<li><button class="folder-item ${ui.folder === id ? 'on' : ''} ${cls}" data-action="folder-open" data-id="${id}">
+      <span class="folder-name">${esc(name)}</span><span class="count">${counts[id] || 0}</span></button></li>`;
+    list.innerHTML = item('all', 'All leads', 'folder-meta') +
+      sortedFolders().map((f) => item(f.id, f.name)).join('') +
+      item('none', 'No folder', 'folder-meta');
+  }
+
+  function renderFolderHead() {
+    const head = $('#folder-head');
+    if (!head) return;
+    const f = getFolder(ui.folder);
+    head.innerHTML = f ? `
+      <h2 class="folder-title">${esc(f.name)}</h2>
+      <button class="btn btn-sm" data-action="folder-rename" data-id="${f.id}">Rename</button>
+      <button class="btn btn-sm btn-ghost danger" data-action="folder-delete" data-id="${f.id}">Delete folder</button>`
+      : `<h2 class="folder-title">${ui.folder === 'none' ? 'Leads without a folder' : 'All leads'}</h2>`;
+  }
+
+  function renderBulkBar() {
+    const bar = $('#bulk-bar');
+    if (!bar) return;
+    const n = ui.selected.size;
+    if (!n) { bar.innerHTML = ''; return; }
+    bar.innerHTML = `
+      <div class="bulk">
+        <strong>${n} selected</strong>
+        <label class="bulk-move">Move to
+          <select id="bulk-folder"><option value="" disabled selected>Choose folder…</option>${folderOptions(null, { none: 'No folder' }).replace('<option value="">', '<option value="__none">')}</select>
+        </label>
+        <button class="btn btn-sm btn-ghost danger" data-action="bulk-delete">Delete</button>
+        <button class="btn btn-sm btn-ghost" data-action="bulk-clear">Clear selection</button>
+      </div>`;
+    $('#bulk-folder').addEventListener('change', async (e) => {
+      let id = e.target.value;
+      if (id === '__new') {
+        const f = await newFolderModal();
+        if (!f) { renderBulkBar(); return; }
+        id = f.id;
+      }
+      moveContacts([...ui.selected], id === '__none' ? null : id);
+    });
+  }
+
+  function moveContacts(ids, folderId) {
+    ids.forEach((id) => { const c = getContact(id); if (c) c.folderId = folderId; });
+    save();
+    const f = getFolder(folderId);
+    toast(`Moved ${ids.length} ${ids.length === 1 ? 'lead' : 'leads'} to ${f ? f.name : 'No folder'}`);
+    ui.selected.clear();
+    renderContactsBody();
+  }
+
+  /** Ask for a folder name in the page (window.prompt is blocked in some hosts). Resolves to the new folder, or null. */
+  function newFolderModal({ title = 'New folder', initial = '', submit = 'Create folder' } = {}) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (v) => { if (!settled) { settled = true; resolve(v); } };
+      openModal(title, `
+        <form id="folder-form">
+          <div class="field"><label for="folder-name">Folder name</label>
+            <input id="folder-name" maxlength="80" required value="${esc(initial)}" placeholder="e.g. Medellín villas, Tulum hotels, Hot leads" autocomplete="off"></div>
+          <div class="row-end">
+            <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">${esc(submit)}</button>
+          </div>
+        </form>`, (root) => {
+        const input = $('#folder-name', root);
+        input.focus(); input.select();
+        modalCloseHook = () => finish(null);
+        $('#folder-form', root).addEventListener('submit', (e) => {
+          e.preventDefault();
+          const name = input.value.trim();
+          if (!name) return;
+          const clash = db.folders.find((f) => f.name.toLowerCase() === name.toLowerCase());
+          if (initial) { // rename
+            if (clash && clash.name !== initial) { toast(`There’s already a folder called ${clash.name}.`, 'warn'); return; }
+            finish(name); closeModal(); return;
+          }
+          const f = ensureFolder(name);
+          save();
+          finish(f);
+          closeModal();
+        });
+      });
+    });
   }
 
   function editContactModal(id) {
     const c = id ? getContact(id) : null;
     const v = (k) => esc(c ? (k === 'phone' ? L.formatPhone(c.phone) : c[k] || '') : '');
+    const defaultFolder = c ? (folderOf(c) ? c.folderId : '') : (getFolder(ui.folder) ? ui.folder : '');
     openModal(c ? 'Edit lead' : 'Add lead', `
       <form id="contact-form" class="vars-grid">
         ${CONTACT_FIELDS.map(([k, label]) => k === 'notes'
           ? `<div class="field span-2"><label for="cf-${k}">${label}</label><textarea id="cf-${k}" name="${k}" rows="3">${v(k)}</textarea></div>`
           : `<div class="field"><label for="cf-${k}">${label}${k === 'phone' ? ' *' : ''}</label><input id="cf-${k}" name="${k}" value="${v(k)}" ${k === 'phone' ? 'type="tel" required placeholder="+57 300 123 4567"' : ''} ${k === 'propertyType' ? 'list="pt-list"' : ''} autocomplete="off"></div>`).join('')}
+        <div class="field"><label for="cf-folder">Folder</label><select id="cf-folder" name="folder">${folderOptions(defaultFolder)}</select></div>
+        <div class="field" id="cf-folder-new-wrap" hidden><label for="cf-folder-new">New folder name</label><input id="cf-folder-new" maxlength="80" autocomplete="off"></div>
         <div class="span-2 row-end">
           <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
           <button type="submit" class="btn btn-primary">Save lead</button>
@@ -1192,6 +1441,11 @@
       </form>`, (root) => {
       const form = $('#contact-form', root);
       $('input', form).focus();
+      const sel = $('#cf-folder', form);
+      sel.addEventListener('change', () => {
+        $('#cf-folder-new-wrap', form).hidden = sel.value !== '__new';
+        if (sel.value === '__new') $('#cf-folder-new', form).focus();
+      });
       form.addEventListener('submit', (e) => {
         e.preventDefault();
         const data = Object.fromEntries(new FormData(form).entries());
@@ -1199,64 +1453,123 @@
         if (!n.ok) { toast(n.error || 'Enter a WhatsApp number.', 'warn'); $('#cf-phone', form).focus(); return; }
         const dupe = contactByPhone(n.digits);
         if (dupe && (!c || dupe.id !== c.id)) { toast(`${L.formatPhone(n.digits)} already belongs to ${contactLabel(dupe)}.`, 'warn'); return; }
+        let folderId = sel.value || null;
+        if (folderId === '__new') {
+          const f = ensureFolder($('#cf-folder-new', form).value);
+          if (!f) { toast('Type a name for the new folder.', 'warn'); $('#cf-folder-new', form).focus(); return; }
+          folderId = f.id;
+        }
         const target = c || { id: uid(), extra: {}, createdAt: nowIso(), lastOpenedAt: null, lastSentAt: null, followUp: null };
         CONTACT_FIELDS.forEach(([k]) => { target[k] = k === 'phone' ? n.digits : (data[k] || '').trim(); });
+        target.folderId = folderId;
         if (!c) db.contacts.unshift(target);
         save();
         closeModal();
         toast(`Saved ${contactLabel(target)}`);
-        if (ui.view === 'contacts') renderContactsBody();
+        renderContactsBody();
       });
     });
   }
 
-  const HEADER_MAP = {
-    name: ['name', 'full name', 'contact', 'contact name', 'owner', 'owner name', 'first name', 'host', 'manager'],
-    propertyName: ['property', 'property name', 'business', 'business name', 'listing', 'hotel', 'company'],
-    phone: ['phone', 'whatsapp', 'whatsapp number', 'number', 'mobile', 'phone number', 'cell', 'telephone', 'tel'],
-    country: ['country'],
-    city: ['city', 'town', 'location'],
-    propertyType: ['property type', 'type', 'category', 'segment'],
-    website: ['website', 'url', 'site', 'web'],
-    instagram: ['instagram', 'ig', 'instagram handle'],
-    email: ['email', 'e-mail', 'mail'],
-    notes: ['notes', 'note', 'comments', 'comment'],
-  };
+  /** Paste (or import) a list of leads, preview it, then add it to a folder. */
+  function pasteLeadsModal(prefill) {
+    const initialFolder = getFolder(ui.folder) ? ui.folder : '';
+    openModal('Paste leads', `
+      <div class="paste">
+        <div class="field">
+          <label for="paste-text">Copy rows from Google Sheets or Excel and paste them here, or type one lead per line</label>
+          <textarea id="paste-text" rows="7" spellcheck="false" placeholder="Casa Libia, +57 300 123 4567, Medellín&#10;Villa Serena, +57 310 555 0101, Cartagena&#10;Hotel Azul	+52 998 123 4567	Tulum">${esc(prefill || '')}</textarea>
+          <div class="hint">Without a header row, each line is read as property, number, location in any order (the number is found automatically). With a header row, columns like <em>property</em>, <em>phone</em>/<em>whatsapp</em>, <em>location</em>, <em>name</em>, <em>notes</em> or <em>folder</em> can be in any order.</div>
+        </div>
+        <div class="vars-grid">
+          <div class="field"><label for="paste-folder">Add to folder</label><select id="paste-folder">${folderOptions(initialFolder)}</select></div>
+          <div class="field" id="paste-folder-new-wrap" hidden><label for="paste-folder-new">New folder name</label><input id="paste-folder-new" maxlength="80" placeholder="e.g. Cartagena villas" autocomplete="off"></div>
+        </div>
+        <div id="paste-preview" aria-live="polite"></div>
+        <div class="row-end">
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="paste-import" disabled>Add leads</button>
+        </div>
+      </div>`, (root) => {
+      root.querySelector('.modal').classList.add('modal-wide');
+      const ta = $('#paste-text', root);
+      const sel = $('#paste-folder', root);
+      const newWrap = $('#paste-folder-new-wrap', root);
+      const btn = $('#paste-import', root);
+      let parsed = { leads: [], skipped: [] };
 
-  function importCSV(text) {
-    const rows = L.parseCSV(text);
-    if (rows.length < 2) { toast('That CSV looks empty.', 'warn'); return; }
-    const headers = rows[0].map((h) => h.trim().toLowerCase().replace(/[_-]+/g, ' '));
-    const col = {};
-    for (const [field, names] of Object.entries(HEADER_MAP)) {
-      const i = headers.findIndex((h) => names.includes(h));
-      if (i >= 0) col[field] = i;
-    }
-    if (col.phone == null) { toast('No phone/WhatsApp column found. Name one column “phone” or “whatsapp”.', 'warn'); return; }
-    let added = 0; let updated = 0; let skipped = 0;
-    for (const r of rows.slice(1)) {
-      const n = L.normalizePhone(r[col.phone], db.settings.defaultCountryCode);
-      if (!n.ok) { skipped++; continue; }
-      const exists = contactByPhone(n.digits);
-      const patch = {};
-      for (const field of Object.keys(HEADER_MAP)) {
-        if (field === 'phone' || col[field] == null) continue;
-        const val = (r[col[field]] || '').trim();
-        if (val && (!exists || !exists[field])) patch[field] = val;
-      }
-      upsertContact(n.digits, patch);
-      if (exists) updated++; else added++;
-    }
-    save();
-    if (ui.view === 'contacts') renderContactsBody();
-    toast(`Imported ${added} new, updated ${updated}${skipped ? `, skipped ${skipped} without a valid number` : ''}.`);
+      const refresh = () => {
+        parsed = L.parseLeads(ta.value, db.settings.defaultCountryCode);
+        const box = $('#paste-preview', root);
+        const n = parsed.leads.length;
+        btn.disabled = !n;
+        btn.textContent = n ? `Add ${n} ${n === 1 ? 'lead' : 'leads'}` : 'Add leads';
+        if (!ta.value.trim()) { box.innerHTML = ''; return; }
+        const known = parsed.leads.filter((l) => contactByPhone(l.phone)).length;
+        const shown = parsed.leads.slice(0, 100);
+        box.innerHTML = `
+          <div class="paste-summary">
+            <strong>${n} ${n === 1 ? 'lead' : 'leads'} found</strong>${parsed.hasHeader ? ' <span class="pill pill-scheduled">header row detected</span>' : ''}
+            ${known ? `<span class="muted"> · ${known} already saved (their empty fields will be filled in)</span>` : ''}
+          </div>
+          ${n ? `<div class="table-wrap paste-table"><table class="table">
+            <thead><tr><th>Property</th><th>Number</th><th>Location</th><th>Other</th><th></th></tr></thead>
+            <tbody>${shown.map((l) => `<tr>
+              <td>${esc(l.propertyName || '—')}</td>
+              <td class="mono nowrap">${esc(L.formatPhone(l.phone))}</td>
+              <td>${esc(l.city || '')}</td>
+              <td class="muted small">${esc([l.name, l.country, l.folder && 'Folder: ' + l.folder, l.notes].filter(Boolean).join(' · '))}</td>
+              <td>${contactByPhone(l.phone) ? '<span class="pill pill-new">saved</span>' : '<span class="pill pill-sent">new</span>'}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>${n > shown.length ? `<div class="muted small">…and ${n - shown.length} more</div>` : ''}` : ''}
+          ${parsed.skipped.length ? `<details class="skipped"><summary>${parsed.skipped.length} ${parsed.skipped.length === 1 ? 'line' : 'lines'} skipped</summary>
+            <ul>${parsed.skipped.slice(0, 50).map((x) => `<li><span class="mono">${esc(x.text || '(empty)')}</span> <span class="muted">— ${esc(x.reason)}</span></li>`).join('')}</ul>
+            ${!db.settings.defaultCountryCode && parsed.skipped.some((x) => /country code/i.test(x.reason)) ? '<p class="small">Tip: set a default country code in Settings to accept numbers without one.</p>' : ''}
+          </details>` : ''}`;
+      };
+
+      ta.addEventListener('input', refresh);
+      sel.addEventListener('change', () => { newWrap.hidden = sel.value !== '__new'; if (!newWrap.hidden) $('#paste-folder-new', root).focus(); });
+      btn.addEventListener('click', () => {
+        let folderId = sel.value || null;
+        if (folderId === '__new') {
+          const f = ensureFolder($('#paste-folder-new', root).value);
+          if (!f) { toast('Type a name for the new folder.', 'warn'); $('#paste-folder-new', root).focus(); return; }
+          folderId = f.id;
+        }
+        let added = 0; let updated = 0;
+        for (const lead of parsed.leads) {
+          const exists = contactByPhone(lead.phone);
+          const patch = {};
+          for (const field of Object.keys(L.LEAD_HEADERS)) {
+            if (field === 'phone' || field === 'folder' || !lead[field]) continue;
+            if (!exists || !exists[field]) patch[field] = lead[field];
+          }
+          const c = upsertContact(lead.phone, patch);
+          const target = folderId || (lead.folder ? ensureFolder(lead.folder).id : null);
+          if (target) c.folderId = target;
+          if (exists) updated++; else added++;
+        }
+        save();
+        closeModal();
+        if (folderId) ui.folder = folderId;
+        if (ui.view === 'contacts') renderContacts(); else go('contacts');
+        const f = getFolder(folderId);
+        toast(`Added ${added} new ${added === 1 ? 'lead' : 'leads'}${updated ? `, updated ${updated}` : ''}${f ? ` in ${f.name}` : ''}${parsed.skipped.length ? ` · skipped ${parsed.skipped.length}` : ''}.`);
+      });
+      refresh();
+      ta.focus();
+    });
   }
 
   function exportCSV() {
-    const rows = [CONTACT_FIELDS.map(([, l]) => l).concat(['Last opened', 'Last sent', 'Follow-up due'])];
-    db.contacts.forEach((c) => rows.push(CONTACT_FIELDS.map(([k]) => (k === 'phone' ? L.formatPhone(c.phone) : c[k] || ''))
-      .concat([c.lastOpenedAt || '', c.lastSentAt || '', c.followUp ? c.followUp.due : ''])));
-    download(`roam-leads-${L.localDate(new Date())}.csv`, L.toCSV(rows), 'text/csv');
+    const rows = [CONTACT_FIELDS.map(([, l]) => l).concat(['Folder', 'Last opened', 'Last sent', 'Follow-up due'])];
+    const list = ui.view === 'contacts' ? contactsInView() : db.contacts;
+    list.forEach((c) => rows.push(CONTACT_FIELDS.map(([k]) => (k === 'phone' ? L.formatPhone(c.phone) : c[k] || ''))
+      .concat([folderOf(c) ? folderOf(c).name : '', c.lastOpenedAt || '', c.lastSentAt || '', c.followUp ? c.followUp.due : ''])));
+    const f = getFolder(ui.folder);
+    const slug = f ? '-' + f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') : '';
+    download(`roam-leads${slug}-${L.localDate(new Date())}.csv`, L.toCSV(rows), 'text/csv');
   }
 
   // ---------------------------------------------------------------------------
@@ -1485,6 +1798,7 @@
 
   let lastFocus = null;
   function openModal(title, bodyHtml, onMount) {
+    if (modalCloseHook) { const hook = modalCloseHook; modalCloseHook = null; hook(); }
     lastFocus = document.activeElement;
     const root = $('#modal');
     root.innerHTML = `<div class="modal-backdrop" data-action="close-modal"></div>
@@ -1496,7 +1810,10 @@
     if (onMount) onMount(root);
   }
 
+  let modalCloseHook = null; // resolves a pending ask()/newFolderModal() when the dialog is dismissed
+
   function closeModal() {
+    if (modalCloseHook) { const hook = modalCloseHook; modalCloseHook = null; hook(); }
     const root = $('#modal');
     root.hidden = true;
     root.innerHTML = '';
@@ -1512,10 +1829,11 @@
           <button class="btn btn-ghost" id="ask-no">Cancel</button>
           <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="ask-yes">${esc(confirmLabel)}</button>
         </div>`, (root) => {
-        const done = (v) => { closeModal(); resolve(v); };
+        let settled = false;
+        const done = (v) => { if (!settled) { settled = true; resolve(v); } closeModal(); };
+        modalCloseHook = () => done(false);
         $('#ask-yes', root).addEventListener('click', () => done(true));
         $('#ask-no', root).addEventListener('click', () => done(false));
-        $$('[data-action="close-modal"]', root).forEach((el) => el.addEventListener('click', () => resolve(false)));
         $('#ask-yes', root).focus();
       });
     });
@@ -1649,9 +1967,46 @@
       if (!c || !(await ask(`Delete ${contactLabel(c)}? Their outreach history is kept.`, 'Delete lead'))) return;
       db.contacts = db.contacts.filter((x) => x.id !== c.id);
       if (ui.qs.contactId === c.id) ui.qs.contactId = null;
+      ui.selected.delete(c.id);
       save(); renderContactsBody(); updateNavBadge();
     },
-    'import-csv': () => pickFile('.csv,text/csv', importCSV),
+    'import-csv': () => pickFile('.csv,.tsv,.txt,text/csv,text/plain', (text) => pasteLeadsModal(text)),
+    'paste-leads': () => pasteLeadsModal(''),
+    'folder-open': (el) => {
+      ui.folder = el.dataset.id; ui.selected.clear();
+      if (ui.view === 'contacts') renderContactsBody(); else go('contacts');
+    },
+    'folder-new': async () => {
+      const f = await newFolderModal();
+      if (f) { ui.folder = f.id; ui.selected.clear(); renderContactsBody(); toast(`Created ${f.name}`); }
+    },
+    'folder-rename': async (el) => {
+      const f = getFolder(el.dataset.id);
+      if (!f) return;
+      const name = await newFolderModal({ title: 'Rename folder', initial: f.name, submit: 'Rename' });
+      if (name && name !== f.name) { f.name = name.slice(0, 80); save(); renderContactsBody(); toast('Folder renamed'); }
+    },
+    'folder-delete': async (el) => {
+      const f = getFolder(el.dataset.id);
+      if (!f) return;
+      const n = db.contacts.filter((c) => c.folderId === f.id).length;
+      if (!(await ask(`Delete the folder “${f.name}”?${n ? ` Its ${n} ${n === 1 ? 'lead stays' : 'leads stay'} in your contacts under No folder.` : ''}`, 'Delete folder'))) return;
+      db.contacts.forEach((c) => { if (c.folderId === f.id) c.folderId = null; });
+      db.folders = db.folders.filter((x) => x.id !== f.id);
+      if (ui.qs.folderId === f.id) ui.qs.folderId = '';
+      ui.folder = 'all';
+      save(); renderContactsBody();
+      toast('Folder deleted');
+    },
+    'bulk-clear': () => { ui.selected.clear(); renderContactsBody(); },
+    'bulk-delete': async () => {
+      const ids = [...ui.selected];
+      if (!(await ask(`Delete ${ids.length} ${ids.length === 1 ? 'lead' : 'leads'}? Their outreach history is kept.`, 'Delete leads'))) return;
+      db.contacts = db.contacts.filter((c) => !ui.selected.has(c.id));
+      ui.selected.clear();
+      save(); renderContactsBody(); updateNavBadge();
+      toast(`Deleted ${ids.length} ${ids.length === 1 ? 'lead' : 'leads'}`);
+    },
     'export-csv': () => exportCSV(),
 
     'tpl-select': (el) => { ui.tplSelected = el.dataset.id; renderTemplateList(); renderTemplateEditor(); },

@@ -23,6 +23,12 @@
   // ---------------------------------------------------------------------------
 
   const map = {
+    folders: {
+      table: 'wa_folders',
+      order: ['created_at', true],
+      toRow: (f) => ({ id: f.id, name: f.name || '', created_at: f.createdAt || new Date().toISOString() }),
+      fromRow: (r) => ({ id: r.id, name: r.name, createdAt: r.created_at }),
+    },
     templates: {
       table: 'wa_templates',
       order: ['created_at', true],
@@ -42,7 +48,7 @@
         id: c.id, phone: c.phone, name: c.name || '', property_name: c.propertyName || '',
         country: c.country || '', city: c.city || '', property_type: c.propertyType || '',
         website: c.website || '', instagram: c.instagram || '', email: c.email || '', notes: c.notes || '',
-        extra: c.extra || {}, created_at: c.createdAt || new Date().toISOString(),
+        extra: c.extra || {}, folder_id: orNull(c.folderId), created_at: c.createdAt || new Date().toISOString(),
         last_opened_at: orNull(c.lastOpenedAt), last_sent_at: orNull(c.lastSentAt),
         follow_up_due: c.followUp ? c.followUp.due : null,
         follow_up_template_id: c.followUp ? orNull(c.followUp.templateId) : null,
@@ -51,7 +57,7 @@
       fromRow: (r) => ({
         id: r.id, phone: r.phone, name: r.name, propertyName: r.property_name, country: r.country,
         city: r.city, propertyType: r.property_type, website: r.website, instagram: r.instagram,
-        email: r.email, notes: r.notes, extra: r.extra || {}, createdAt: r.created_at,
+        email: r.email, notes: r.notes, extra: r.extra || {}, folderId: r.folder_id || null, createdAt: r.created_at,
         lastOpenedAt: r.last_opened_at, lastSentAt: r.last_sent_at,
         followUp: r.follow_up_due
           ? { due: r.follow_up_due, templateId: r.follow_up_template_id, createdAt: r.follow_up_created_at }
@@ -134,15 +140,17 @@
 
   /** Load everything for the signed-in user. `empty` is true on a brand-new account. */
   async function pull() {
-    const [templates, contacts, outreach, settingsRows] = await Promise.all([
+    const [folders, templates, contacts, outreach, settingsRows] = await Promise.all([
+      fetchAll(map.folders.table, map.folders.order),
       fetchAll(map.templates.table, map.templates.order),
       fetchAll(map.contacts.table, map.contacts.order),
       fetchAll(map.outreach.table, map.outreach.order),
       client.from('wa_settings').select('*').limit(1).then(({ data, error }) => { if (error) throw error; return data; }),
     ]);
     return {
-      empty: !templates.length && !contacts.length && !outreach.length && !settingsRows.length,
+      empty: !folders.length && !templates.length && !contacts.length && !outreach.length && !settingsRows.length,
       data: {
+        folders: folders.map(map.folders.fromRow),
         templates: templates.map(map.templates.fromRow),
         contacts: contacts.map(map.contacts.fromRow),
         outreach: outreach.map(map.outreach.fromRow),
@@ -178,7 +186,7 @@
     const next = snapshot(db);
 
     // Deletes first so a re-added phone number doesn't collide with the old row.
-    for (const coll of ['outreach', 'contacts', 'templates']) {
+    for (const coll of ['outreach', 'contacts', 'templates', 'folders']) {
       if (!prev) break;
       const gone = Object.keys(prev[coll] || {}).filter((id) => !(id in next[coll]));
       for (const ids of chunks(gone)) {
@@ -187,7 +195,7 @@
       }
     }
 
-    for (const coll of ['templates', 'contacts', 'outreach']) {
+    for (const coll of ['folders', 'templates', 'contacts', 'outreach']) {
       const before = (prev && prev[coll]) || {};
       const changed = Object.entries(next[coll]).filter(([id, json]) => before[id] !== json).map(([, json]) => JSON.parse(json));
       for (const rows of chunks(changed)) {

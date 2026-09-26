@@ -30,7 +30,7 @@ The repo is set up for Vercel (`vercel.json`): there's no build step, and the si
 When you sign in, templates, contacts, history, follow-ups and settings are saved to Supabase
 (project `dvfkktqonymradyybjqv`). The same data then shows up on any computer or phone where you sign in.
 
-- **Tables:** `wa_templates`, `wa_contacts`, `wa_outreach` and `wa_settings`. The schema is in
+- **Tables:** `wa_folders`, `wa_templates`, `wa_contacts`, `wa_outreach` and `wa_settings`. The schema is in
   `supabase/migrations/`.
 - **Access:** row-level security means a signed-in user can only read and change their own rows.
   Signed-out visitors can't read anything.
@@ -63,7 +63,7 @@ artifact, which blocks outside connections. There the app says so and runs witho
 | **Quick Send** | The main screen. Type a number, pick a template, fill in the highlighted fields, then click **OPEN WHATSAPP →** (or press ⌘/Ctrl + Enter). Afterwards: **Mark as Sent**, then schedule a follow-up (3 / 5 / 7 days or a date), then **Next lead**. |
 | **Follow-ups** | Leads that are overdue, due today or coming up. **Load →** fills Quick Send with the contact, the follow-up template and the preview. Sending it completes the follow-up. |
 | **History** | Every chat you opened, with the message and its status. **Opened** means the chat was opened. **Sent** means you confirmed you pressed Send. |
-| **Contacts** | Every number you've messaged is saved here automatically. You can add or edit details, import a CSV of your lead database, and export to CSV. |
+| **Contacts** | Every number you've messaged is saved here automatically. You can organize leads into named **folders** (create, rename, delete, and move several leads at once), **paste leads** straight from a spreadsheet, import a CSV, and export a folder to CSV. |
 | **Templates** | Create, edit, duplicate, delete and turn templates on or off. Variables are detected automatically. |
 | **Settings** | Default country code, how chats open (WhatsApp Web, desktop app or wa.me), and backup/restore. |
 
@@ -111,13 +111,35 @@ contacted them) and can fill in their details.
 
 If the browser blocks the popup, a notice appears with a direct link. Allow popups for the page once.
 
-## CSV import
+## Folders
 
-Contacts → **Import CSV**. The first row must be headers. Recognized columns (case-insensitive):
-`name`, `property` / `property name`, `phone` / `whatsapp`, `country`, `city`,
-`property type` / `type`, `website`, `instagram`, `email`, `notes`.
-Rows without a valid number are skipped. Existing contacts (matched by number) only have
-their empty fields filled in.
+Folders are named lists of leads, for example "Medellín villas" or "Tulum hotels". Each lead is in
+one folder or none.
+
+- In **Contacts**, the sidebar lists your folders with how many leads each has.
+- Tick leads, then **Move to** another folder or **Delete** them.
+- Deleting a folder keeps its leads. They move to **No folder**.
+- In **Quick Send**, the **Folder** picker decides which folder a new lead goes into, and it
+  remembers your last choice.
+
+## Pasting and importing leads
+
+Contacts → **Paste leads**. Copy rows from Google Sheets or Excel, or type one lead per line
+(`Casa Libia, +57 300 123 4567, Medellín`), check the preview, choose a folder, and add them.
+
+- **Without a header row:** the phone number is found in each line wherever it is. The other
+  cells are read as property name, location and notes.
+- **With a header row:** columns are matched by name, in any order: `property`,
+  `phone` / `whatsapp`, `location` / `city`, `name`, `country`, `type`, `website`, `instagram`,
+  `email`, `notes`, and `folder`. A `folder` column puts each lead into that folder, creating it if needed.
+- **Separators:** tabs, commas and semicolons all work.
+- **What gets skipped:** lines without a valid number, listed in the preview with the reason.
+- **Existing leads:** leads you've already saved (matched by number) only have their empty fields filled in.
+
+**Import CSV** opens a file in the same preview.
+
+In **Quick Send**, pasting a whole lead (property, number and location) into the number box fills
+in the property and location too. Pasting several lines opens the paste preview.
 
 ## Development
 

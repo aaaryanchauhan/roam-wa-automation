@@ -133,8 +133,9 @@
     return Math.round((a - b) / 86400000);
   }
 
-  /** Minimal RFC 4180 CSV parser (quoted fields, escaped quotes, CRLF). */
-  function parseCSV(text) {
+  /** Minimal RFC 4180 CSV parser (quoted fields, escaped quotes, CRLF). Also handles tab- or semicolon-separated text. */
+  function parseCSV(text, delimiter) {
+    const delim = delimiter || ',';
     const rows = [];
     let row = [];
     let field = '';
@@ -147,7 +148,7 @@
           if (src[i + 1] === '"') { field += '"'; i++; } else quoted = false;
         } else field += ch;
       } else if (ch === '"') quoted = true;
-      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === delim) { row.push(field); field = ''; }
       else if (ch === '\n' || ch === '\r') {
         if (ch === '\r' && src[i + 1] === '\n') i++;
         row.push(field); rows.push(row); row = []; field = '';
@@ -166,10 +167,98 @@
       .join('\r\n');
   }
 
+  /** Column names recognised in pasted or imported lead lists (lowercase, "_" and "-" read as spaces). */
+  const LEAD_HEADERS = {
+    name: ['name', 'full name', 'contact', 'contact name', 'owner', 'owner name', 'first name', 'host', 'manager'],
+    propertyName: ['property', 'property name', 'business', 'business name', 'listing', 'hotel', 'company', 'villa'],
+    phone: ['phone', 'whatsapp', 'whatsapp number', 'number', 'mobile', 'phone number', 'cell', 'telephone', 'tel', 'wa'],
+    country: ['country'],
+    city: ['city', 'town', 'location', 'area', 'place'],
+    propertyType: ['property type', 'type', 'category', 'segment'],
+    website: ['website', 'url', 'site', 'web'],
+    instagram: ['instagram', 'ig', 'instagram handle'],
+    email: ['email', 'e-mail', 'mail'],
+    notes: ['notes', 'note', 'comments', 'comment'],
+    folder: ['folder', 'list', 'group'],
+  };
+
+  function detectDelimiter(text) {
+    const first = String(text || '').split(/\r?\n/).find((l) => l.trim()) || '';
+    if (first.includes('\t')) return '\t';
+    const count = (ch) => first.split(ch).length - 1;
+    return count(';') > count(',') ? ';' : ',';
+  }
+
+  /** A cell that is only a phone number: 8-15 digits plus spaces, +, (), dots or dashes. */
+  function looksLikePhone(cell) {
+    const s = String(cell || '').trim();
+    const digits = s.replace(/\D/g, '').length;
+    return /^[+\d\s().-]+$/.test(s) && digits >= 8 && digits <= 15;
+  }
+
+  /** Map a header row to column indexes, or null when the row isn't a header (no phone column). */
+  function mapLeadHeaders(cells) {
+    const headers = cells.map((h) => String(h).trim().toLowerCase().replace(/[_-]+/g, ' '));
+    const col = {};
+    for (const [field, names] of Object.entries(LEAD_HEADERS)) {
+      const i = headers.findIndex((h) => names.includes(h));
+      if (i >= 0) col[field] = i;
+    }
+    return col.phone == null ? null : col;
+  }
+
+  /**
+   * Parse leads pasted from a spreadsheet, a CSV file or plain lines.
+   * With a header row, columns are matched by name. Without one, the phone number
+   * is found in each row, and the other cells are read as property name, location, notes.
+   * Duplicate numbers within the paste are merged.
+   */
+  function parseLeads(text, defaultCountryCode) {
+    const rows = parseCSV(text, detectDelimiter(text)).map((r) => r.map((c) => c.trim()));
+    const col = rows.length ? mapLeadHeaders(rows[0]) : null;
+    const leads = [];
+    const skipped = [];
+    const byPhone = {};
+    for (const cells of col ? rows.slice(1) : rows) {
+      let lead;
+      let rawPhone;
+      if (col) {
+        rawPhone = cells[col.phone];
+        lead = {};
+        for (const field of Object.keys(LEAD_HEADERS)) {
+          if (field !== 'phone' && col[field] != null && cells[col[field]]) lead[field] = cells[col[field]];
+        }
+      } else {
+        const pi = cells.findIndex(looksLikePhone);
+        rawPhone = pi >= 0 ? cells[pi] : '';
+        const rest = cells.filter((c, i) => i !== pi); // keep blanks so columns stay in place
+        lead = {};
+        if (rest[0]) lead.propertyName = rest[0];
+        if (rest[1]) lead.city = rest[1];
+        const notes = rest.slice(2).filter(Boolean);
+        if (notes.length) lead.notes = notes.join(' · ');
+      }
+      const n = normalizePhone(rawPhone, defaultCountryCode);
+      if (!n.ok) {
+        skipped.push({ text: cells.filter(Boolean).join(', '), reason: rawPhone ? (n.error || 'Invalid number') : 'No phone number found' });
+        continue;
+      }
+      lead.phone = n.digits;
+      if (byPhone[n.digits]) {
+        for (const [k, v] of Object.entries(lead)) if (!byPhone[n.digits][k]) byPhone[n.digits][k] = v;
+      } else {
+        byPhone[n.digits] = lead;
+        leads.push(lead);
+      }
+    }
+    return { leads, skipped, hasHeader: !!col };
+  }
+
   const api = {
     extractVariables, templateSegments, renderTemplate, missingVariables,
     normalizePhone, formatPhone, buildWhatsAppUrl, firstName,
     localDate, addDays, daysUntil, parseCSV, toCSV,
+    LEAD_HEADERS, looksLikePhone, mapLeadHeaders, parseLeads,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
