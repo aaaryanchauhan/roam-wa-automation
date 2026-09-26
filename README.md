@@ -13,7 +13,17 @@ It has no build step and no dependencies. You can:
 
 - **Open `index.html`** in Chrome, Edge, Safari or Firefox (double-click it), or
 - **Serve it locally** with `npm start` and go to http://localhost:5173, or
-- **Host it** on any static host (GitHub Pages, Netlify, Vercel, S3). Nothing runs on a server.
+- **Host it** on any static host (Vercel, Netlify, GitHub Pages, S3). Nothing runs on a server.
+
+### Deploying to Vercel
+
+The repo is set up for Vercel (`vercel.json`): there's no build step, and the site is served as static files.
+
+1. Go to https://vercel.com/new, import `aaaryanchauhan/roam-wa-automation`, leave **Framework Preset** as
+   **Other**, and click **Deploy**. Or, from a local clone, run `npx vercel --prod`.
+2. In Supabase, go to **Authentication → URL Configuration**. Set **Site URL** to your Vercel URL (e.g.
+   `https://roam-wa-automation.vercel.app`) and add the same URL under **Redirect URLs**, so the
+   confirmation email links go back to the app.
 
 ## Database (Supabase)
 
