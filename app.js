@@ -6,7 +6,7 @@
   const cloud = window.RoamCloud || { enabled: false };
   const STORE_KEY = 'roam-wa-console-v1';
   // Bump on each release so you can tell which version a deployment is serving (shown in Settings).
-  const APP_VERSION = '1.5 — lead list, sent counter, folders';
+  const APP_VERSION = '1.6 — roam-outreach database';
   const MODE_KEY = 'roam-wa-mode'; // 'local' when the user chose to skip signing in
 
   // ---------------------------------------------------------------------------
@@ -159,11 +159,33 @@
     return null;
   }
 
+  /**
+   * The fullest copy of an account's data cached in this browser, from any account (e.g. one whose
+   * database project no longer exists). Used once, to fill a brand-new, empty account.
+   */
+  function largestCachedCopy() {
+    let best = null;
+    let bestSize = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(STORE_KEY + ':')) continue;
+        const data = readLocal(key);
+        const size = data ? (data.contacts || []).length + (data.outreach || []).length : 0;
+        if (size > bestSize) { best = data; bestSize = size; }
+      }
+    } catch (e) { /* storage unavailable */ }
+    return best;
+  }
+
   /** Fill in anything missing from older or partial data. */
   function normalizeDb(data) {
     migrateTemplates(data);
     const base = freshDb();
-    return { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
+    const merged = { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
+    // Quick Send needs templates to pick from; bring back the built-in ones if the list is empty.
+    if (!Array.isArray(merged.templates) || !merged.templates.length) merged.templates = seedTemplates();
+    return merged;
   }
 
   // In cloud mode the browser copy is a per-user cache; in local mode it is the only copy.
@@ -245,7 +267,7 @@
     try {
       const remote = await cloud.pull();
       if (remote.empty) {
-        const existing = readLocal(storeKey) || readLocal(STORE_KEY);
+        const existing = readLocal(storeKey) || readLocal(STORE_KEY) || largestCachedCopy();
         db = existing ? normalizeDb(existing) : freshDb();
         sync.snapshot = null; // upload everything
         ui.ready = true;

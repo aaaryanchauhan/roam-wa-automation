@@ -1,5 +1,5 @@
 -- Roam WhatsApp outreach console. Every row belongs to the signed-in user (RLS).
--- Applied to project dvfkktqonymradyybjqv on 2026-09-26.
+-- Applied to project dvfkktqonymradyybjqv on 2026-09-26, and to roam-outreach (wcoqabveynbnyhbfcxwc) on 2026-09-30.
 
 create table public.wa_templates (
   id uuid primary key default gen_random_uuid(),

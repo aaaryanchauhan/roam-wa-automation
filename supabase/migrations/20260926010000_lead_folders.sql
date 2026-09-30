@@ -1,5 +1,5 @@
 -- Named folders for organizing leads. A lead is in at most one folder.
--- Applied to project dvfkktqonymradyybjqv on 2026-09-26.
+-- Applied to project dvfkktqonymradyybjqv on 2026-09-26, and to roam-outreach (wcoqabveynbnyhbfcxwc) on 2026-09-30.
 create table public.wa_folders (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,

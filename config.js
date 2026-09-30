@@ -4,6 +4,6 @@
  * Set supabaseUrl to '' to run the app in browser-only mode.
  */
 window.ROAM_CONFIG = {
-  supabaseUrl: 'https://dvfkktqonymradyybjqv.supabase.co',
-  supabaseKey: 'sb_publishable_nhyXzqwxK9eFNDEL2wgk5Q_NdnuhBES',
+  supabaseUrl: 'https://wcoqabveynbnyhbfcxwc.supabase.co',
+  supabaseKey: 'sb_publishable_4FNeCBZ7ZBEkagDMdbJxCQ_xpkuVBag',
 };

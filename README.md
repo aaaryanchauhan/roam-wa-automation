@@ -28,7 +28,7 @@ The repo is set up for Vercel (`vercel.json`): there's no build step, and the si
 ## Database (Supabase)
 
 When you sign in, templates, contacts, history, follow-ups and settings are saved to Supabase
-(project `dvfkktqonymradyybjqv`). The same data then shows up on any computer or phone where you sign in.
+(project `roam-outreach`, `wcoqabveynbnyhbfcxwc`, kept separate from Staye's database). The same data then shows up on any computer or phone where you sign in.
 
 - **Tables:** `wa_folders`, `wa_templates`, `wa_contacts`, `wa_outreach` and `wa_settings`. The schema is in
   `supabase/migrations/`.
