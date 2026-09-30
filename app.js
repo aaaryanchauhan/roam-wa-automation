@@ -6,7 +6,7 @@
   const cloud = window.RoamCloud || { enabled: false };
   const STORE_KEY = 'roam-wa-console-v1';
   // Bump on each release so you can tell which version a deployment is serving (shown in Settings).
-  const APP_VERSION = '1.6 — roam-outreach database';
+  const APP_VERSION = '1.7 — opening counts as sent, Not on WhatsApp';
   const MODE_KEY = 'roam-wa-mode'; // 'local' when the user chose to skip signing in
 
   // ---------------------------------------------------------------------------
@@ -183,6 +183,14 @@
     migrateTemplates(data);
     const base = freshDb();
     const merged = { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
+    // Opening WhatsApp counts as sent: upgrade entries recorded as only "opened".
+    for (const o of merged.outreach || []) {
+      if (o.status !== 'opened') continue;
+      o.status = 'sent';
+      o.sentAt = o.sentAt || o.openedAt;
+      const c = (merged.contacts || []).find((x) => x.id === o.contactId);
+      if (c && (!c.lastSentAt || c.lastSentAt < o.sentAt)) c.lastSentAt = o.sentAt;
+    }
     // Quick Send needs templates to pick from; bring back the built-in ones if the list is empty.
     if (!Array.isArray(merged.templates) || !merged.templates.length) merged.templates = seedTemplates();
     return merged;
@@ -384,6 +392,7 @@
   }
 
   function contactStatus(c) {
+    if (c.noWhatsapp) return { key: 'nowa', label: 'Not on WhatsApp' };
     if (c.followUp) {
       const d = L.daysUntil(c.followUp.due);
       if (d <= 0) return { key: 'due', label: 'Follow-up due' };
@@ -785,6 +794,7 @@
         const st = contactStatus(known);
         html += ` <span class="pill pill-${st.key}">${esc(st.label)}</span>`;
       }
+      if (known && known.noWhatsapp) html += `<div class="known">This number was marked as not on WhatsApp.</div>`;
     }
     hint.innerHTML = html;
   }
@@ -965,21 +975,60 @@
       templateId: t ? t.id : null,
       templateName: t ? t.name : 'Custom message',
       message: msg,
-      status: 'opened',
+      status: 'sent', // opening the chat counts as sent; "Not on WhatsApp" reverses it
       openedAt: nowIso(),
-      sentAt: null,
+      sentAt: nowIso(),
       isFollowUp: !!qs.isFollowUp,
     };
     db.outreach.unshift(o);
+    c.lastSentAt = o.sentAt;
+    c.noWhatsapp = false;
+    if (o.isFollowUp || c.followUp) c.followUp = null; // sending anything clears a pending follow-up
     save();
     qs.contactId = c.id;
-    ui.pending = { outreachId: o.id, stage: 'confirm' };
+    qs.isFollowUp = false;
+    ui.pending = { outreachId: o.id, stage: 'followup' };
+    const banner = $('.qs .banner');
+    if (banner) banner.remove();
     updatePhoneHint();
     renderAfter();
     renderRecents();
     updateNavBadge();
-    const sentBtn = $('#qs-after [data-action="mark-sent"]');
-    if (sentBtn) sentBtn.focus();
+  }
+
+  /** Latest time a message to this lead counted as sent, or null. */
+  function lastSentFor(contactId) {
+    return db.outreach
+      .filter((o) => o.contactId === contactId && o.status === 'sent' && o.sentAt)
+      .reduce((max, o) => (!max || o.sentAt > max ? o.sentAt : max), null);
+  }
+
+  /** The number isn't on WhatsApp: the message no longer counts as sent and the lead is tagged. */
+  function markNoWhatsapp(ids) {
+    const before = [];
+    for (const id of ids) {
+      const o = getOutreach(id);
+      if (!o || o.status === 'no_whatsapp') continue;
+      const c = getContact(o.contactId);
+      before.push({ o, status: o.status, sentAt: o.sentAt, c, c0: c && { lastSentAt: c.lastSentAt, noWhatsapp: c.noWhatsapp, followUp: c.followUp } });
+      o.status = 'no_whatsapp';
+      o.sentAt = null;
+      if (c) { c.noWhatsapp = true; c.lastSentAt = lastSentFor(c.id); c.followUp = null; }
+    }
+    if (!before.length) return;
+    save();
+    refreshView();
+    const one = before.length === 1 && before[0].c;
+    toastUndo(one ? `${contactLabel(one)} marked as not on WhatsApp` : `${plural(before.length, 'entry', 'entries')} marked as not on WhatsApp`, () => {
+      for (const b of before) {
+        b.o.status = b.status; b.o.sentAt = b.sentAt;
+        if (b.c) Object.assign(b.c, b.c0);
+      }
+      if (ui.pending && before.some((b) => b.o.id === ui.pending.outreachId)) ui.pending.stage = 'followup';
+      save();
+      refreshView();
+      if (ui.view === 'send') renderAfter();
+    });
   }
 
   function markSent(outreachId) {
@@ -990,6 +1039,7 @@
     const c = getContact(o.contactId);
     if (c) {
       c.lastSentAt = o.sentAt;
+      c.noWhatsapp = false;
       if (o.isFollowUp || c.followUp) c.followUp = null; // Sending anything clears a pending follow-up.
     }
     save();
@@ -1050,10 +1100,22 @@
             <button class="btn btn-ghost" data-action="dismiss-after">Not sent</button>
           </div>
         </section>`;
+    } else if (o.status === 'no_whatsapp') {
+      box.innerHTML = `
+        <section class="card after">
+          <div class="after-title"><span class="dot dot-nowa"></span> <strong>${who}</strong> is marked as not on WhatsApp. It isn’t counted as sent.</div>
+          <div class="row">
+            <button class="btn btn-primary" data-action="qs-next" title="Alt+N">Next lead →</button>
+            <button class="btn btn-ghost" data-action="mark-sent" data-id="${o.id}">It is on WhatsApp — count as sent</button>
+          </div>
+        </section>`;
+      const next = $('[data-action="qs-next"]', box);
+      if (next) next.focus();
     } else if (p.stage === 'followup' || (p.stage === 'confirm' && o.status === 'sent')) {
       box.innerHTML = `
         <section class="card after">
-          <div class="after-title"><span class="dot dot-sent"></span> Sent to <strong>${who}</strong>. Schedule a follow-up?</div>
+          <div class="after-title"><span class="dot dot-sent"></span> Counted as sent to <strong>${who}</strong>. Schedule a follow-up?</div>
+          <p class="muted small nowa-hint">Number not on WhatsApp? <button class="btn btn-sm btn-nowa" data-action="no-whatsapp" data-id="${o.id}" title="Alt+X">Not on WhatsApp</button></p>
           ${schedulerHtml(o.contactId)}
           <div class="row">
             <button class="btn btn-ghost" data-action="fu-skip">No follow-up</button>
@@ -1103,7 +1165,7 @@
       .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id));
   }
 
-  const queueMatches = (c) => ui.queue.filter === 'all' || !c.lastSentAt;
+  const queueMatches = (c) => ui.queue.filter === 'all' || (!c.lastSentAt && !c.noWhatsapp);
 
   /** What the list shows: matching leads, plus the loaded lead so it stays visible after sending. */
   function queueItems() {
@@ -1156,7 +1218,7 @@
     const since = db.settings.counterResetAt;
     const items = queueItems();
     const pos = items.findIndex((c) => c.id === ui.qs.contactId);
-    const left = queueOrdered().filter((c) => !c.lastSentAt).length;
+    const left = queueOrdered().filter((c) => !c.lastSentAt && !c.noWhatsapp).length;
     bar.innerHTML = `
       <div class="counter" role="group" aria-label="Messages sent">
         <span class="counter-num" id="sent-count">${total}</span>
@@ -1317,16 +1379,19 @@
   // ---------------------------------------------------------------------------
 
   function renderHistory() {
-    const counts = { all: db.outreach.length, opened: db.outreach.filter((o) => o.status === 'opened').length, sent: db.outreach.filter((o) => o.status === 'sent').length };
+    const counts = { all: db.outreach.length };
+    for (const o of db.outreach) counts[o.status] = (counts[o.status] || 0) + 1;
+    const filters = [['all', 'All'], ['sent', 'Sent'], ['no_whatsapp', 'Not on WhatsApp']].concat(counts.opened ? [['opened', 'Opened']] : []);
+    if (!filters.some(([f]) => f === ui.historyFilter)) ui.historyFilter = 'all';
     main().innerHTML = `
       <div class="page">
         <div class="page-head">
           <h1>Outreach history</h1>
-          <p class="muted">“Opened” means the chat was opened with the message; only “Sent” means you pressed Send.</p>
+          <p class="muted">Opening WhatsApp counts as sent. Mark numbers that aren’t on WhatsApp so they don’t count.</p>
         </div>
         <div class="toolbar">
           <div class="seg" role="group" aria-label="Filter by status">
-            ${['all', 'opened', 'sent'].map((f) => `<button class="${ui.historyFilter === f ? 'on' : ''}" data-action="history-filter" data-f="${f}">${f === 'all' ? 'All' : f === 'opened' ? 'Opened' : 'Sent'} <span class="count">${counts[f]}</span></button>`).join('')}
+            ${filters.map(([f, label]) => `<button class="${ui.historyFilter === f ? 'on' : ''}" data-action="history-filter" data-f="${f}">${label} <span class="count">${counts[f] || 0}</span></button>`).join('')}
           </div>
           <input id="history-search" type="search" placeholder="Search name, property, number…" value="${esc(ui.historySearch)}">
         </div>
@@ -1366,11 +1431,13 @@
       bar.innerHTML = rows.length ? '<div class="bulk bulk-idle"><span>Tick entries to delete or mark several at once.</span></div>' : '';
       return;
     }
-    const opened = sel.filter((o) => o.status === 'opened').length;
+    const opened = sel.filter((o) => o.status !== 'sent').length;
+    const canNowa = sel.filter((o) => o.status !== 'no_whatsapp').length;
     bar.innerHTML = `
       <div class="bulk">
         <strong>${sel.length} selected</strong>
-        ${opened ? `<button class="btn btn-sm btn-primary" data-action="history-bulk-sent">Mark ${opened} as sent</button>` : ''}
+        ${opened ? `<button class="btn btn-sm" data-action="history-bulk-sent">Count ${opened} as sent</button>` : ''}
+        ${canNowa ? `<button class="btn btn-sm btn-nowa" data-action="history-bulk-nowa">Not on WhatsApp (${canNowa})</button>` : ''}
         <button class="btn btn-sm btn-danger" data-action="history-bulk-delete">Delete ${plural(sel.length, 'entry', 'entries')}</button>
         <button class="btn btn-sm btn-ghost" data-action="history-bulk-clear">Clear selection</button>
       </div>`;
@@ -1405,10 +1472,11 @@
             <td>${esc(o.templateName)}${o.isFollowUp ? ' <span class="pill pill-scheduled">follow-up</span>' : ''}
               <details class="msg"><summary>Message</summary><div class="bubble bubble-sm">${esc(o.message)}</div></details></td>
             <td>${o.status === 'sent'
-              ? `<span class="pill pill-sent">Sent</span><div class="muted small">${esc(fmtDateTime(o.sentAt))}</div>`
-              : '<span class="pill pill-opened">Opened</span>'}</td>
+              ? `<span class="pill pill-sent">Sent</span>`
+              : o.status === 'no_whatsapp' ? '<span class="pill pill-nowa">Not on WhatsApp</span>' : '<span class="pill pill-opened">Opened</span>'}</td>
             <td class="right nowrap">
-              ${o.status === 'opened' ? `<button class="btn btn-sm btn-primary" data-action="mark-sent" data-id="${o.id}">Mark as Sent</button>` : ''}
+              ${o.status !== 'sent' ? `<button class="btn btn-sm" data-action="mark-sent" data-id="${o.id}">Count as sent</button>` : ''}
+              ${o.status !== 'no_whatsapp' ? `<button class="btn btn-sm btn-nowa" data-action="no-whatsapp" data-id="${o.id}">Not on WhatsApp</button>` : ''}
               ${c ? `<button class="btn btn-sm" data-action="reschedule" data-id="${c.id}">${c.followUp ? 'Follow-up ' + esc(fmtDue(c.followUp.due)) : 'Follow-up…'}</button>` : ''}
               ${c ? `<button class="btn btn-sm btn-ghost" data-action="load-contact" data-id="${c.id}">Load</button>` : ''}
               <button class="btn btn-sm btn-ghost danger" data-action="delete-outreach" data-id="${o.id}" aria-label="Delete entry">✕</button>
@@ -2196,11 +2264,16 @@
     'mark-sent': (el) => {
       markSent(el.dataset.id);
       if (ui.view === 'send') refreshSendAfterSent();
-      if (ui.view === 'history') {
-        renderHistoryBody();
-        const o = getOutreach(el.dataset.id);
-        if (o) rescheduleModal(o.contactId);
-      }
+      if (ui.view === 'history') renderHistory();
+    },
+    'no-whatsapp': (el) => {
+      markNoWhatsapp([el.dataset.id]);
+      if (ui.view === 'send') renderAfter();
+    },
+    'history-bulk-nowa': () => {
+      const ids = [...ui.historySelected];
+      ui.historySelected.clear();
+      markNoWhatsapp(ids);
     },
     reopen: (el) => {
       const o = getOutreach(el.dataset.id);
@@ -2264,7 +2337,7 @@
     'history-bulk-clear': () => { ui.historySelected.clear(); renderHistoryBody(); },
     'history-bulk-delete': () => deleteOutreach([...ui.historySelected]),
     'history-bulk-sent': () => {
-      const ids = [...ui.historySelected].filter((id) => (getOutreach(id) || {}).status === 'opened');
+      const ids = [...ui.historySelected].filter((id) => (getOutreach(id) || {}).status !== 'sent');
       ids.forEach((id) => markSent(id));
       ui.historySelected.clear();
       renderHistory();
@@ -2380,6 +2453,7 @@
     if (ui.view !== 'send' || !$('#modal').hidden) return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); openWhatsApp(); }
     else if (e.altKey && e.code === 'KeyS' && ui.pending && ui.pending.stage === 'confirm') { e.preventDefault(); markSent(ui.pending.outreachId); refreshSendAfterSent(); }
+    else if (e.altKey && e.code === 'KeyX' && ui.pending) { e.preventDefault(); markNoWhatsapp([ui.pending.outreachId]); renderAfter(); }
     else if (e.altKey && e.code === 'KeyN') { e.preventDefault(); goQueue(1); }
     else if (e.altKey && e.code === 'KeyP') { e.preventDefault(); goQueue(-1); }
   });

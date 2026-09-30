@@ -336,6 +336,11 @@ mark.v-missing { background: var(--mark-missing); color: var(--mark-missing-text
 .pill-sent { background: var(--pill-sent); color: var(--pill-sent-text); }
 .pill-due { background: var(--pill-due); color: var(--pill-due-text); }
 .pill-scheduled { background: var(--pill-scheduled); color: var(--pill-scheduled-text); }
+.pill-nowa { background: var(--pill-due); color: var(--pill-due-text); }
+.dot-nowa { background: var(--danger); }
+.btn-nowa { color: var(--danger); border-color: var(--danger); background: transparent; }
+.btn-nowa:hover { background: var(--pill-due); }
+.nowa-hint { margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* ---------- Tables / toolbars ---------- */
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

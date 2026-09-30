@@ -62,7 +62,7 @@ artifact, which blocks outside connections. There the app says so and runs witho
 | --- | --- |
 | **Quick Send** | The main screen. Type a number (or pick the next lead from the list), pick a template, fill in the highlighted fields, then click **OPEN WHATSAPP →** (or press ⌘/Ctrl + Enter). Afterwards: **Mark as Sent**, schedule a follow-up (3 / 5 / 7 days or a date), then **Next lead →**. |
 | **Follow-ups** | Leads that are overdue, due today or coming up. **Load →** fills Quick Send with the contact, the follow-up template and the preview. Sending it completes the follow-up. |
-| **History** | Every chat you opened, with the message and its status. **Opened** means the chat was opened. **Sent** means you confirmed you pressed Send. |
+| **History** | Every message, with its status: **Sent** (opening WhatsApp counts as sent) or **Not on WhatsApp**. Change the status of one entry, or tick several and change them together. |
 | **Contacts** | Every number you've messaged is saved here automatically. You can organize leads into named **folders** (create, rename, delete, and move several leads at once), **paste leads** straight from a spreadsheet, import a CSV, and export a folder to CSV. |
 | **Templates** | Create, edit, duplicate, delete and turn templates on or off. Variables are detected automatically. |
 | **Settings** | Default country code, how chats open (WhatsApp Web, desktop app or wa.me), and backup/restore. |
@@ -70,7 +70,7 @@ artifact, which blocks outside connections. There the app says so and runs witho
 ### Keyboard shortcuts (Quick Send)
 
 - **⌘/Ctrl + Enter**: open WhatsApp
-- **Alt + S**: mark as sent
+- **Alt + X**: mark the lead you just messaged as not on WhatsApp
 - **Alt + N** / **Alt + P**: next / previous lead in the lead list
 
 ### Working through a list of leads
@@ -91,7 +91,7 @@ The bar at the top of Quick Send lets you go through a list without leaving the 
 
 ### Sent counter
 
-The counter at the top left shows how many messages you've marked as sent since you last pressed
+The counter at the top left shows how many messages you've sent (opened in WhatsApp, minus any marked not on WhatsApp) since you last pressed
 **Reset**, and how many today. Resetting only restarts the count. Your history is kept, and the
 notification offers **Undo**. When you're signed in, the reset time is saved to your account.
 
@@ -143,6 +143,20 @@ one folder or none.
 - Deleting a folder keeps its leads. They move to **No folder**.
 - In **Quick Send**, the **Folder** picker decides which folder a new lead goes into, and it
   remembers your last choice.
+
+## Sent and not on WhatsApp
+
+Opening a chat with **OPEN WHATSAPP →** records the message as **Sent**, updates the counter,
+and takes the lead out of the **Not sent yet** list.
+
+If the number turns out not to be on WhatsApp, click **Not on WhatsApp** on the panel after
+opening, or press **Alt + X**. You can also do it in History for one entry or several ticked
+entries. When a lead is marked this way:
+- the message stops counting as sent;
+- the lead gets a **Not on WhatsApp** tag and leaves the **Not sent yet** list;
+- any follow-up for it is removed.
+
+**Undo** and **Count as sent** reverse it. Typing that number again shows a warning.
 
 ## Deleting
 

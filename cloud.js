@@ -48,7 +48,7 @@
         id: c.id, phone: c.phone, name: c.name || '', property_name: c.propertyName || '',
         country: c.country || '', city: c.city || '', property_type: c.propertyType || '',
         website: c.website || '', instagram: c.instagram || '', email: c.email || '', notes: c.notes || '',
-        extra: c.extra || {}, folder_id: orNull(c.folderId), created_at: c.createdAt || new Date().toISOString(),
+        extra: c.extra || {}, folder_id: orNull(c.folderId), no_whatsapp: !!c.noWhatsapp, created_at: c.createdAt || new Date().toISOString(),
         last_opened_at: orNull(c.lastOpenedAt), last_sent_at: orNull(c.lastSentAt),
         follow_up_due: c.followUp ? c.followUp.due : null,
         follow_up_template_id: c.followUp ? orNull(c.followUp.templateId) : null,
@@ -57,7 +57,7 @@
       fromRow: (r) => ({
         id: r.id, phone: r.phone, name: r.name, propertyName: r.property_name, country: r.country,
         city: r.city, propertyType: r.property_type, website: r.website, instagram: r.instagram,
-        email: r.email, notes: r.notes, extra: r.extra || {}, folderId: r.folder_id || null, createdAt: r.created_at,
+        email: r.email, notes: r.notes, extra: r.extra || {}, folderId: r.folder_id || null, noWhatsapp: !!r.no_whatsapp, createdAt: r.created_at,
         lastOpenedAt: r.last_opened_at, lastSentAt: r.last_sent_at,
         followUp: r.follow_up_due
           ? { due: r.follow_up_due, templateId: r.follow_up_template_id, createdAt: r.follow_up_created_at }
@@ -70,7 +70,7 @@
       toRow: (o) => ({
         id: o.id, contact_id: orNull(o.contactId), phone: o.phone, contact_name: o.contactName || '',
         property_name: o.propertyName || '', template_id: orNull(o.templateId), template_name: o.templateName || '',
-        message: o.message || '', status: o.status === 'sent' ? 'sent' : 'opened',
+        message: o.message || '', status: ['sent', 'no_whatsapp'].includes(o.status) ? o.status : 'opened',
         opened_at: o.openedAt, sent_at: orNull(o.sentAt), is_follow_up: !!o.isFollowUp,
       }),
       fromRow: (r) => ({
