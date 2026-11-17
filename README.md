@@ -144,6 +144,10 @@ one folder or none.
 - In **Contacts**, the sidebar lists your folders with how many leads each has.
 - Tick leads (or **Select all**), then **Move to** another folder or **Delete** them.
 - Deleting a folder keeps its leads. They move to **No folder**.
+- To message a folder again, click **↺ Mark N as not contacted** above the table (for every contacted lead
+  shown), or tick some leads and use the same button in the selection bar. They go back to **New**, any
+  pending follow-up is cleared, and they appear under **Not sent yet** in Quick Send. History is kept,
+  and the notification offers **Undo**. Leads marked not on WhatsApp are left alone.
 - In **Quick Send**, the **Folder** picker decides which folder a new lead goes into, and it
   remembers your last choice.
 

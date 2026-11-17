@@ -1652,10 +1652,14 @@
     const bar = $('#bulk-bar');
     if (!bar) return;
     const n = ui.selected.size;
-    const inView = contactsInView().length;
+    const view = contactsInView();
+    const inView = view.length;
+    const contactedInView = view.filter(isContacted).length;
+    const contactedSel = [...ui.selected].map(getContact).filter((c) => c && isContacted(c)).length;
     if (!n) {
       bar.innerHTML = inView ? `<div class="bulk bulk-idle"><span>Tick leads to move or delete several at once.</span>
-        <button class="btn btn-sm btn-ghost" data-action="bulk-select-all">Select all ${inView}</button></div>` : '';
+        <button class="btn btn-sm btn-ghost" data-action="bulk-select-all">Select all ${inView}</button>
+        ${contactedInView ? `<button class="btn btn-sm" data-action="reset-contacted-view" title="Set every contacted lead shown here back to New, so you can message them again">↺ Mark ${contactedInView} as not contacted</button>` : ''}</div>` : '';
       return;
     }
     bar.innerHTML = `
@@ -1665,6 +1669,7 @@
         <label class="bulk-move">Move to
           <select id="bulk-folder"><option value="" disabled selected>Choose folder…</option>${folderOptions(null, { none: 'No folder' }).replace('<option value="">', '<option value="__none">')}</select>
         </label>
+        ${contactedSel ? `<button class="btn btn-sm" data-action="bulk-reset-contacted" title="Set back to New, so you can message them again">↺ Mark ${contactedSel} as not contacted</button>` : ''}
         <button class="btn btn-sm btn-danger" data-action="bulk-delete">Delete ${plural(n, 'lead', 'leads')}</button>
         <button class="btn btn-sm btn-ghost" data-action="bulk-clear">Clear selection</button>
       </div>`;
@@ -1676,6 +1681,33 @@
         id = f.id;
       }
       moveContacts([...ui.selected], id === '__none' ? null : id);
+    });
+  }
+
+  /** A lead that counts as contacted: messaged, opened or with a follow-up pending (not "Not on WhatsApp"). */
+  const isContacted = (c) => !c.noWhatsapp && !!(c.lastSentAt || c.lastOpenedAt || c.followUp);
+
+  /** Set leads back to New (uncontacted) so they show up under "Not sent yet" and can be messaged again. History is kept. */
+  function resetContacted(ids) {
+    const before = [];
+    for (const id of ids) {
+      const c = getContact(id);
+      if (!c || !isContacted(c)) continue;
+      before.push({ c, lastSentAt: c.lastSentAt, lastOpenedAt: c.lastOpenedAt, followUp: c.followUp });
+      c.lastSentAt = null;
+      c.lastOpenedAt = null;
+      c.followUp = null;
+    }
+    if (!before.length) { toast('Those leads are already uncontacted.'); return; }
+    save();
+    for (const b of before) ui.selected.delete(b.c.id);
+    refreshView();
+    updateNavBadge();
+    toastUndo(`${before.length === 1 ? contactLabel(before[0].c) : plural(before.length, 'lead', 'leads')} set to not contacted`, () => {
+      for (const b of before) Object.assign(b.c, { lastSentAt: b.lastSentAt, lastOpenedAt: b.lastOpenedAt, followUp: b.followUp });
+      save();
+      refreshView();
+      updateNavBadge();
     });
   }
 
@@ -2394,6 +2426,8 @@
     },
     'bulk-clear': () => { ui.selected.clear(); renderContactsBody(); },
     'bulk-delete': () => deleteContacts([...ui.selected]),
+    'bulk-reset-contacted': () => resetContacted([...ui.selected]),
+    'reset-contacted-view': () => resetContacted(contactsInView().map((c) => c.id)),
     'bulk-select-all': () => { contactsInView().forEach((c) => ui.selected.add(c.id)); renderContactsBody(); },
     'export-csv': () => exportCSV(),
 
