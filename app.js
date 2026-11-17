@@ -463,7 +463,7 @@
     folder: 'all', // Contacts filter: 'all', 'none' or a folder id
     selected: new Set(), // contact ids ticked in the Contacts table
     tplSelected: null,
-    queue: loadQueuePrefs(), // lead list on Quick Send: { folder, filter: 'todo' | 'all', tab: 'list' | 'recent' }
+    queue: loadQueuePrefs(), // lead list on Quick Send: { folder, filter: 'todo' | 'old' | 'all', tab: 'list' | 'recent' }
   };
 
   function loadQueuePrefs() {
@@ -1165,7 +1165,10 @@
       .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id));
   }
 
-  const queueMatches = (c) => ui.queue.filter === 'all' || (!c.lastSentAt && !c.noWhatsapp);
+  /** Leads you've already messaged (and that are on WhatsApp), for sending again. */
+  const wasMessaged = (c) => !!(c.lastSentAt || c.lastOpenedAt) && !c.noWhatsapp;
+
+  const queueMatches = (c) => ui.queue.filter === 'all' || (ui.queue.filter === 'old' ? wasMessaged(c) : (!c.lastSentAt && !c.noWhatsapp));
 
   /** What the list shows: matching leads, plus the loaded lead so it stays visible after sending. */
   function queueItems() {
@@ -1233,9 +1236,11 @@
         </select>
         <select id="queue-filter" aria-label="Which leads to go through">
           <option value="todo">Not sent yet</option>
+          <option value="old">Already messaged</option>
           <option value="all">All leads</option>
         </select>
-        <span class="queue-pos">${pos >= 0 ? `Lead ${pos + 1} of ${items.length}` : `${left} to contact`}</span>
+        <span class="queue-pos">${pos >= 0 ? `Lead ${pos + 1} of ${items.length}` : ui.queue.filter === 'old' ? plural(items.length, 'old contact', 'old contacts') : `${left} to contact`}</span>
+        <button class="btn btn-sm" data-action="load-old" title="Go through everyone you've already messaged, to send again">↻ Load old contacts</button>
         <button class="btn btn-sm" data-action="qs-prev" title="Alt+P">← Previous</button>
         <button class="btn btn-sm btn-primary" data-action="qs-next" title="Alt+N">Next lead →</button>
       </div>`;
@@ -1258,6 +1263,7 @@
       .slice(0, 12);
     if (!list.length) {
       box.innerHTML = `<div class="empty small">${tab === 'recent' ? 'Leads you message will show up here.'
+        : ui.queue.filter === 'old' ? `Nobody in ${esc(queueFolderName())} has been messaged yet.`
         : db.contacts.length ? `Every lead in ${esc(queueFolderName())} has been messaged. Pick another folder, or show all leads.`
           : 'No leads yet. Paste a list in Contacts → Paste leads, or type a number above.'}</div>`;
       return;
@@ -2322,6 +2328,15 @@
     'qs-next': () => goQueue(1),
     'qs-prev': () => goQueue(-1),
     'queue-load': (el) => { autoSaveLead(); loadContact(el.dataset.id); },
+    'load-old': () => {
+      autoSaveLead();
+      ui.queue.folder = 'all'; ui.queue.filter = 'old'; ui.queue.tab = 'list';
+      saveQueuePrefs();
+      const list = queueItems();
+      if (!list.length) { renderRecents(); toast('No old contacts yet. Nobody has been messaged.'); return; }
+      loadContact(list[0].id);
+      toast(`Loaded ${plural(list.length, 'old contact', 'old contacts')}. Open WhatsApp to resend, then Next lead.`);
+    },
     'leads-tab': (el) => { ui.queue.tab = el.dataset.tab; saveQueuePrefs(); renderLeadsPanel(); },
     'counter-reset': () => {
       const before = db.settings.counterResetAt;

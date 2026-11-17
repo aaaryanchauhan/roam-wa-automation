@@ -84,6 +84,9 @@ The bar at the top of Quick Send lets you go through a list without leaving the 
   next lead that hasn't been messaged. At the end of the list, the form clears for a new number.
 - **Lead list tab:** shows the list, with the current lead highlighted. Click any lead to load it.
   **Recent** shows who you messaged last.
+- **Sending again:** **↻ Load old contacts** switches the list to everyone you've already messaged
+  (the **Already messaged** option) and loads the first one. Open WhatsApp to resend, then **Next lead →**.
+  Leads marked not on WhatsApp are left out.
 - **Where the list starts:** clicking **Message →** in Contacts, or pasting leads into a folder,
   points the list at that folder, so **Next lead** carries on from there.
 - **Nothing is lost:** a lead you type or paste into Quick Send is saved as soon as you move on,
